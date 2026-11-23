@@ -1,0 +1,31 @@
+name: Windows C11 Build & Test CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  msvc-build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build Windows Tweaker & Unit Test Suite
+        run: .\build.bat
+
+      - name: Run Automated Unit Tests
+        run: .\bin\test_suite.exe
+
+      - name: Verify CLI Subcommands
+        run: |
+          .\bin\windows-tweaker.exe --help
+          .\bin\windows-tweaker.exe hardware
+          .\bin\windows-tweaker.exe startup
+          .\bin\windows-tweaker.exe clean --dry-run
+          .\bin\windows-tweaker.exe optimize --dry-run
