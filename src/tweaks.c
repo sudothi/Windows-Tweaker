@@ -91,9 +91,8 @@ void tweaks_run_audit(tweaks_report_t *report) {
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t_start);
 
-    ui_spinner_tick(0, "Auditing Windows Registry & Startup keys...", "HKCU & HKLM");
+    ui_spinner_tick(0, "Lendo chaves de Registro do Windows...", "HKCU & HKLM");
 
-    /* 1. Startup Applications */
     enumerate_startup_key(HKEY_CURRENT_USER,
                           "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
                           "HKCU\\Run", report);
@@ -105,34 +104,32 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->issues_detected++;
     }
 
-    /* 2. Active Power Scheme */
-    ui_spinner_tick(2, "Checking Windows Power Scheme...", "Control\\Power");
+    ui_spinner_tick(2, "Verificando Plano de Energia da CPU...", "Control\\Power");
     if (reg_read_string(HKEY_LOCAL_MACHINE,
                         "SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes",
                         "ActivePowerScheme",
                         report->power_plan_guid, sizeof(report->power_plan_guid))) {
         if (_stricmp(report->power_plan_guid, "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") == 0) {
-            strncpy(report->power_plan_name, "High Performance", sizeof(report->power_plan_name) - 1);
+            strncpy(report->power_plan_name, "Alto Desempenho (High Performance)", sizeof(report->power_plan_name) - 1);
             report->is_high_performance = true;
         } else if (_stricmp(report->power_plan_guid, "e9a42b02-d5df-448d-aa00-03f14749eb61") == 0) {
-            strncpy(report->power_plan_name, "Ultimate Performance", sizeof(report->power_plan_name) - 1);
+            strncpy(report->power_plan_name, "Desempenho Maximo (Ultimate Performance)", sizeof(report->power_plan_name) - 1);
             report->is_high_performance = true;
         } else if (_stricmp(report->power_plan_guid, "a1841308-3541-4fab-bc81-f71556f20b4a") == 0) {
-            strncpy(report->power_plan_name, "Power Saver (Throttled)", sizeof(report->power_plan_name) - 1);
+            strncpy(report->power_plan_name, "Economia de Energia (CPU Limitada)", sizeof(report->power_plan_name) - 1);
             report->is_high_performance = false;
             report->issues_detected++;
         } else {
-            strncpy(report->power_plan_name, "Balanced (Default)", sizeof(report->power_plan_name) - 1);
+            strncpy(report->power_plan_name, "Equilibrado (Padrao do Windows)", sizeof(report->power_plan_name) - 1);
             report->is_high_performance = false;
             report->issues_detected++;
         }
     } else {
-        strncpy(report->power_plan_name, "Balanced (Standard)", sizeof(report->power_plan_name) - 1);
+        strncpy(report->power_plan_name, "Equilibrado (Padrao do Windows)", sizeof(report->power_plan_name) - 1);
         report->is_high_performance = false;
     }
 
-    /* 3. SSD NTFS TRIM (DisableDeleteNotify == 0 means TRIM is enabled) */
-    ui_spinner_tick(4, "Inspecting NTFS & SSD TRIM configuration...", "FileSystem");
+    ui_spinner_tick(4, "Inspecionando suporte a TRIM no SSD...", "FileSystem");
     DWORD disable_trim = 0;
     if (reg_read_dword(HKEY_LOCAL_MACHINE,
                        "SYSTEM\\CurrentControlSet\\Control\\FileSystem",
@@ -152,8 +149,7 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->ntfs_last_access_disabled = (disable_last_access != 0);
     }
 
-    /* 4. GameDVR Background Recording */
-    ui_spinner_tick(6, "Auditing GameDVR & Multimedia Scheduler...", "GameConfigStore");
+    ui_spinner_tick(6, "Auditando GameDVR e agendador multimidia...", "GameConfigStore");
     DWORD dvr_enabled = 0, app_capture = 0;
     bool has_dvr = reg_read_dword(HKEY_CURRENT_USER, "System\\GameConfigStore", "GameDVR_Enabled", &dvr_enabled);
     bool has_cap = reg_read_dword(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR", "AppCaptureEnabled", &app_capture);
@@ -162,7 +158,6 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->issues_detected++;
     }
 
-    /* 5. MenuShowDelay (UI Responsiveness) */
     char delay_str[32] = {0};
     if (reg_read_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", delay_str, sizeof(delay_str))) {
         report->menu_show_delay_ms = atoi(delay_str);
@@ -173,7 +168,6 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->issues_detected++;
     }
 
-    /* 6. MMCSS SystemResponsiveness */
     DWORD sys_resp = 20;
     if (reg_read_dword(HKEY_LOCAL_MACHINE,
                        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile",
@@ -183,7 +177,6 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->system_responsiveness_pct = 20;
     }
 
-    /* 7. Desktop Transparency Effects */
     DWORD transp = 1;
     if (reg_read_dword(HKEY_CURRENT_USER,
                        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
@@ -197,105 +190,163 @@ void tweaks_run_audit(tweaks_report_t *report) {
     report->audit_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
     char summary[128];
-    snprintf(summary, sizeof(summary), "%d startup apps, %d tuning opportunity(s) found",
+    snprintf(summary, sizeof(summary), "%d programas no boot, %d ajuste(s) recomendado(s)",
              report->startup_count, report->issues_detected);
     ui_spinner_finish(report->issues_detected > 0 ? UI_STATUS_WARN : UI_STATUS_OK,
-                      "Windows OS & Registry Audit", summary, report->audit_elapsed_ms);
+                      "Auditoria de Sistema e Registro", summary, report->audit_elapsed_ms);
 }
 
 void tweaks_print_report(const tweaks_report_t *report) {
-    ui_section_header("⚙️", "WINDOWS OS & GAMING TWEAKS AUDIT", "Registry, Power Scheme, SSD TRIM & UI Latency");
+    ui_section_header("SISTEMA", "DIAGNOSTICO DE OTIMIZACAO DO WINDOWS E JOGOS",
+                      "Explicacao detalhada do que esta mal otimizado e como corrigir");
+
+    char state_buf[128];
 
     /* 1. Power Plan */
-    char detail[128];
-    snprintf(detail, sizeof(detail), "Active: %s", report->power_plan_name);
-    ui_print_status(report->is_high_performance ? UI_STATUS_OK : UI_STATUS_WARN,
-                    "CPU Power Scheme", detail);
+    snprintf(state_buf, sizeof(state_buf), "Plano Ativo: %s", report->power_plan_name);
+    ui_print_diagnostic_item(
+        report->is_high_performance ? UI_STATUS_OK : UI_STATUS_WARN,
+        "Plano de Energia da CPU",
+        state_buf,
+        report->is_high_performance
+            ? "O processador opera sem reducoes bruscas de clock (parking/throttling)."
+            : "O modo Equilibrado reduz a frequencia da CPU continuamente para poupar energia, gerando oscilacao de FPS e latencia.",
+        report->is_high_performance
+            ? "Nenhuma alteracao necessaria."
+            : "Ative o plano 'Alto Desempenho' nas Opcoes de Energia do Painel de Controle quando estiver conectado na tomada."
+    );
 
     /* 2. SSD TRIM */
-    ui_print_status(report->ntfs_trim_enabled ? UI_STATUS_OK : UI_STATUS_CRIT,
-                    "SSD NTFS TRIM Support",
-                    report->ntfs_trim_enabled ? "Enabled (DisableDeleteNotify = 0)" : "DISABLED - Degrades SSD lifespan!");
+    ui_print_diagnostic_item(
+        report->ntfs_trim_enabled ? UI_STATUS_OK : UI_STATUS_CRIT,
+        "Comando TRIM do SSD (NTFS)",
+        report->ntfs_trim_enabled ? "Ativado (DisableDeleteNotify = 0)" : "DESATIVADO (DisableDeleteNotify = 1)",
+        "O comando TRIM avisa o controlador do SSD quais blocos de memoria foram apagados para que ele limpe as celulas antecipadamente.",
+        report->ntfs_trim_enabled
+            ? "O SSD esta configurado corretamente para manter velocidade maxima e vida util."
+            : "Rode 'fsutil behavior set DisableDeleteNotify 0' como Administrador para reativar o TRIM imediatamente."
+    );
 
-    /* 3. GameDVR Background Capture */
-    ui_print_status(report->game_dvr_enabled ? UI_STATUS_WARN : UI_STATUS_OK,
-                    "Xbox GameDVR Capture",
-                    report->game_dvr_enabled ? "Active in background (can cause FPS micro-stutter)" : "Disabled (Optimal for gaming)");
+    /* 3. Xbox GameDVR Capture */
+    ui_print_diagnostic_item(
+        report->game_dvr_enabled ? UI_STATUS_WARN : UI_STATUS_OK,
+        "Gravacao Xbox GameDVR",
+        report->game_dvr_enabled ? "Ativa em segundo plano (AppCaptureEnabled = 1)" : "Desativada (Otimizado para jogos)",
+        report->game_dvr_enabled
+            ? "O Windows mantem um buffer de captura de video na GPU mesmo quando voce nao esta gravando, causando micro-stuttering e perda de FPS."
+            : "A placa de video dedica 100% do seu encoder e banda de VRAM diretamente para o jogo ou aplicacao.",
+        report->game_dvr_enabled
+            ? "Use a opcao [3] 'Inspecionar e Aplicar Otimizacoes' para desativar o GameDVR no Registro com 1 clique."
+            : "Configuracao ideal ja aplicada."
+    );
 
-    /* 4. Desktop Menu Latency */
-    snprintf(detail, sizeof(detail), "%d ms (%s)",
-             report->menu_show_delay_ms,
-             report->menu_show_delay_ms <= 50 ? "Snappy UI response" : "Default 400ms lag - tuneable to 20ms");
-    ui_print_status(report->menu_show_delay_ms <= 50 ? UI_STATUS_OK : UI_STATUS_WARN,
-                    "Desktop UI Menu Delay", detail);
+    /* 4. Desktop UI Menu Delay */
+    snprintf(state_buf, sizeof(state_buf), "%d ms de atraso", report->menu_show_delay_ms);
+    ui_print_diagnostic_item(
+        report->menu_show_delay_ms <= 50 ? UI_STATUS_OK : UI_STATUS_WARN,
+        "Latencia de Menus (UI Delay)",
+        state_buf,
+        report->menu_show_delay_ms <= 50
+            ? "Menus de contexto e janelas do Windows respondem quase instantaneamente."
+            : "Por padrao o Windows espera 400 milissegundos antes de abrir menus ao passar o mouse, dando sensacao de sistema pesado.",
+        report->menu_show_delay_ms <= 50
+            ? "Configuracao ideal ja aplicada."
+            : "Use a opcao [3] 'Inspecionar e Aplicar Otimizacoes' para reduzir a chave MenuShowDelay de 400ms para 20ms."
+    );
 
     /* 5. Multimedia CPU Reservation */
-    snprintf(detail, sizeof(detail), "%u%% background reservation (MMCSS SystemProfile)",
-             report->system_responsiveness_pct);
-    ui_print_status(report->system_responsiveness_pct <= 10 ? UI_STATUS_OK : UI_STATUS_INFO,
-                    "MMCSS CPU Throttling", detail);
+    snprintf(state_buf, sizeof(state_buf), "%u%% reservado para segundo plano (MMCSS)", report->system_responsiveness_pct);
+    ui_print_diagnostic_item(
+        report->system_responsiveness_pct <= 10 ? UI_STATUS_OK : UI_STATUS_INFO,
+        "Reserva de CPU Multimidia",
+        state_buf,
+        "O Multimedia Class Scheduler (MMCSS) reserva ate 20% de tempo de CPU para tarefas em segundo plano durante jogos.",
+        "Manter entre 10% e 20% garante estabilidade de audio e rede sem comprometer threads principais."
+    );
 
     /* 6. Boot Startup Load */
-    snprintf(detail, sizeof(detail), "%d auto-start entries in Registry (`startup` to list)",
-             report->startup_count);
-    ui_print_status(report->startup_count <= 6 ? UI_STATUS_OK : UI_STATUS_WARN,
-                    "Boot Startup Applications", detail);
+    snprintf(state_buf, sizeof(state_buf), "%d programas iniciando junto com o Windows", report->startup_count);
+    ui_print_diagnostic_item(
+        report->startup_count <= 6 ? UI_STATUS_OK : UI_STATUS_WARN,
+        "Sobrecarga de Inicializacao",
+        state_buf,
+        report->startup_count <= 6
+            ? "Poucos aplicativos disputam disco e RAM durante o boot do sistema."
+            : "Ter muitos programas no boot (Steam, Epic, Spotify, iCloud, atualizadores) atrasa a inicializacao e consome gigabytes de RAM ociosamente.",
+        report->startup_count <= 6
+            ? "Inicializacao enxuta e saudavel."
+            : "Abra a opcao [4] 'Gerenciador de Inicializacao' para ver a lista completa dos 18 programas e o impacto de cada um."
+    );
 }
 
 void tweaks_print_startup(const tweaks_report_t *report) {
-    ui_section_header("🚀", "WINDOWS STARTUP REGISTRY ENTRIES", "Programs launched automatically at boot");
+    ui_section_header("BOOT", "PROGRAMAS CONFIGURADOS NA INICIALIZACAO DO WINDOWS",
+                      "Chaves HKCU\\...\\Run e HKLM\\...\\Run que iniciam sozinhas ao ligar o PC");
 
     if (report->startup_count == 0) {
-        printf("  " ANSI_GREEN "✓" ANSI_RESET " No registry startup entries detected.\n");
+        printf("  " ANSI_GREEN "[OK]" ANSI_RESET " Nenhum programa listado nas chaves Run do Registro.\n");
         return;
     }
 
-    printf("  " ANSI_CYAN ANSI_BOLD "%-12s %-26s %s" ANSI_RESET "\n",
-           "HIVE", "APPLICATION", "COMMAND / EXECUTABLE");
-    ui_divider(72);
+    printf("  " ANSI_DIM "Explicacao: Cada item abaixo e disparado automaticamente pelo Windows logo apos o login.\n"
+           "  Desativar launchers de jogos e sincronizadores que voce nao usa todo dia economiza RAM e acelera o boot." ANSI_RESET "\n\n");
+
+    printf("  " ANSI_CYAN ANSI_BOLD "%-4s %-12s %-26s %s" ANSI_RESET "\n",
+           "#", "ORIGEM", "NOME DO PROGRAMA", "EXECUTAVEL / COMANDO NO REGISTRO");
+    ui_divider(84);
 
     for (int i = 0; i < report->startup_count; i++) {
         const startup_entry_t *e = &report->startup_apps[i];
-        char short_cmd[42];
+        char short_cmd[48];
         size_t clen = strlen(e->command);
-        if (clen > 38) {
-            snprintf(short_cmd, sizeof(short_cmd), "%.35s...", e->command);
+        if (clen > 44) {
+            snprintf(short_cmd, sizeof(short_cmd), "%.41s...", e->command);
         } else {
             snprintf(short_cmd, sizeof(short_cmd), "%s", e->command);
         }
 
         const char *hive_col = (strncmp(e->source, "HKLM", 4) == 0) ? ANSI_MAGENTA : ANSI_CYAN;
-        printf("  %s%-12s" ANSI_RESET " " ANSI_WHITE ANSI_BOLD "%-26.25s" ANSI_RESET " " ANSI_GRAY "%s" ANSI_RESET "\n",
-               hive_col, e->source, e->name, short_cmd);
+        printf("  " ANSI_DIM "[%2d]" ANSI_RESET " %s%-12s" ANSI_RESET " " ANSI_WHITE ANSI_BOLD "%-26.25s" ANSI_RESET " " ANSI_GRAY "%s" ANSI_RESET "\n",
+               i + 1, hive_col, e->source, e->name, short_cmd);
     }
-    ui_divider(72);
-    printf("  " ANSI_DIM "Total entries: %d (Fewer startup items reduces boot time and idle RAM usage)" ANSI_RESET "\n",
+    ui_divider(84);
+    printf("  " ANSI_AMBER "Total: %d programas" ANSI_RESET ANSI_DIM " (Dica: Voce pode desabilitar os itens desnecessarios na aba 'Inicializar' do Gerenciador de Tarefas)" ANSI_RESET "\n",
            report->startup_count);
 }
 
 int tweaks_apply_safe_optimizations(bool dry_run) {
     int applied = 0;
 
-    ui_section_header("⚡", dry_run ? "OPTIMIZATION PREVIEW (--dry-run)" : "APPLYING SAFE WINDOWS OPTIMIZATIONS",
-                      "User-level Registry & Responsiveness Tuning");
+    ui_section_header("AJUSTES", dry_run ? "INSPECAO DO QUE SERA ALTERADO NO REGISTRO (--dry-run)"
+                                         : "APLICANDO OTIMIZACOES SEGURAS NO REGISTRO DO WINDOWS",
+                      "Alteracoes seguras no escopo do usuario (HKEY_CURRENT_USER)");
 
     /* 1. Tune MenuShowDelay to 20ms */
+    printf("  " BG_MAGENTA " REGISTRO 1 " ANSI_RESET " " ANSI_WHITE ANSI_BOLD "Reduzir Atraso de Renderizacao de Menus (MenuShowDelay)" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "├─ Chave Alvo  : HKEY_CURRENT_USER\\Control Panel\\Desktop\\MenuShowDelay" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "├─ Valor Padrao: \"400\" (400ms)  -->  Novo Valor: \"20\" (20ms)" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "╰─ Efeito Real : Elimina a espera artificial ao abrir menus de contexto e janelas do Explorer." ANSI_RESET "\n");
+
     if (dry_run) {
-        ui_print_status(UI_STATUS_TWEAK, "Set MenuShowDelay -> 20ms",
-                        "[DRY-RUN] Would update HKCU\\Control Panel\\Desktop\\MenuShowDelay");
+        ui_print_status(UI_STATUS_TWEAK, "Simulacao MenuShowDelay", "Pronto para aplicar (20ms)");
         applied++;
     } else {
         if (reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", "20")) {
-            ui_print_status(UI_STATUS_OK, "Set MenuShowDelay -> 20ms",
-                            "Updated HKCU\\Control Panel\\Desktop\\MenuShowDelay");
+            ui_print_status(UI_STATUS_OK, "MenuShowDelay Atualizado", "Gravado valor \"20\" com sucesso");
             applied++;
         }
     }
+    printf("\n");
 
     /* 2. Disable GameDVR background capture lag */
+    printf("  " BG_MAGENTA " REGISTRO 2 " ANSI_RESET " " ANSI_WHITE ANSI_BOLD "Desativar Captura em Segundo Plano do Xbox GameDVR" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "├─ Chave Alvo 1: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR\\AppCaptureEnabled" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "├─ Chave Alvo 2: HKEY_CURRENT_USER\\System\\GameConfigStore\\GameDVR_Enabled" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "├─ Valor Padrao: 1 (Ativo)      -->  Novo Valor: 0 (Desativado)" ANSI_RESET "\n");
+    printf("    " ANSI_DIM "╰─ Efeito Real : Impede que o Windows grave buffers de video ocultos na GPU, estabilizando o frame-time em jogos." ANSI_RESET "\n");
+
     if (dry_run) {
-        ui_print_status(UI_STATUS_TWEAK, "Disable GameDVR AppCapture",
-                        "[DRY-RUN] Would set HKCU\\...\\GameDVR\\AppCaptureEnabled = 0");
+        ui_print_status(UI_STATUS_TWEAK, "Simulacao Xbox GameDVR", "Pronto para desativar captura de fundo");
         applied++;
     } else {
         bool ok1 = reg_write_dword(HKEY_CURRENT_USER,
@@ -305,8 +356,7 @@ int tweaks_apply_safe_optimizations(bool dry_run) {
                                    "System\\GameConfigStore",
                                    "GameDVR_Enabled", 0);
         if (ok1 || ok2) {
-            ui_print_status(UI_STATUS_OK, "Disable GameDVR AppCapture",
-                            "Background recording disabled for lower frame-time latency");
+            ui_print_status(UI_STATUS_OK, "Xbox GameDVR Desativado", "Captura em segundo plano desligada com sucesso");
             applied++;
         }
     }

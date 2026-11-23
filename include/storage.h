@@ -4,12 +4,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MAX_COLD_FILES    12
+#define MAX_COLD_FILES    15
 #define MAX_CACHE_TARGETS 10
 
 typedef struct {
     char     name[64];
     char     path[260];
+    char     explanation[128];
     uint64_t size_bytes;
     uint32_t file_count;
     bool     exists;
@@ -31,6 +32,7 @@ typedef struct {
     cache_target_t caches[MAX_CACHE_TARGETS];
     int            cache_count;
     uint64_t       total_cache_bytes;
+    uint64_t       safe_cleanable_bytes;
     uint32_t       total_cache_files;
 
     cold_file_t    cold_files[MAX_COLD_FILES];
@@ -43,10 +45,13 @@ typedef struct {
 /* Perform full disk, cache, and cold-file audit with live terminal spinner */
 void storage_run_audit(storage_report_t *report, uint64_t min_cold_size_mb, int min_cold_days, const char *custom_dir);
 
-/* Render formatted storage audit report to terminal */
+/* Render formatted storage audit report with explanations to terminal */
 void storage_print_report(const storage_report_t *report);
 
+/* Inspect exact files and folders that will be removed during cleanup */
+void storage_print_removal_preview(const storage_report_t *report);
+
 /* Clean safe temporary caches (supports dry_run preview mode) */
-void storage_clean_caches(bool dry_run, uint64_t *out_bytes_Cleaned, uint32_t *out_files_cleaned);
+void storage_clean_caches(bool dry_run, uint64_t *out_bytes_cleaned, uint32_t *out_files_cleaned);
 
 #endif /* WT_STORAGE_H */

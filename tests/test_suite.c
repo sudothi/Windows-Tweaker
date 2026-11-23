@@ -12,11 +12,11 @@ static int g_tests_passed = 0;
 #define ASSERT_TRUE(cond, msg) do { \
     g_tests_run++; \
     if (!(cond)) { \
-        printf("  [FAIL] %s (Line %d)\n", msg, __LINE__); \
+        printf("  [FALHA] %s (Linha %d)\n", msg, __LINE__); \
         return 1; \
     } else { \
         g_tests_passed++; \
-        printf("  " ANSI_GREEN "✓" ANSI_RESET " %s\n", msg); \
+        printf("  " ANSI_GREEN "[PASS]" ANSI_RESET " %s\n", msg); \
     } \
 } while (0)
 
@@ -60,20 +60,21 @@ static int test_tweaks_audit(void) {
 int main(void) {
     ui_init();
     ui_print_banner("TEST-SUITE");
-    ui_section_header("🧪", "AUTOMATED C UNIT TEST SUITE", "Verifying formatting, hardware probes & Win32 registry audit");
+    ui_section_header("TESTES", "SUITE AUTOMATIZADA DE TESTES UNITARIOS EM C11",
+                      "Validando formatadores, registradores __cpuid e auditoria Win32");
 
     int rc = 0;
     rc |= test_byte_formatter();
     rc |= test_hardware_probe();
     rc |= test_tweaks_audit();
 
-    ui_divider(72);
+    ui_divider(84);
     if (rc == 0) {
-        ui_print_status(UI_STATUS_OK, "All Unit Tests Passed", "Zero errors detected");
+        ui_print_status(UI_STATUS_OK, "Todos os Testes Aprovados", "Zero erros detectados");
     } else {
-        ui_print_status(UI_STATUS_CRIT, "Unit Test Failure", "Check logs above");
+        ui_print_status(UI_STATUS_CRIT, "Falha nos Testes Unitarios", "Verifique os logs acima");
     }
-    printf("  " ANSI_DIM "Executed %d/%d assertions successfully." ANSI_RESET "\n\n", g_tests_passed, g_tests_run);
+    printf("  " ANSI_DIM "Executadas %d/%d assercoes com sucesso." ANSI_RESET "\n\n", g_tests_passed, g_tests_run);
 
     ui_cleanup();
     return rc;
