@@ -14,40 +14,32 @@ static const char *FRAMES[] = {
 };
 #define FRAME_COUNT 10
 
-/* Logo 1 do Windows Tweaker compacta (24 colunas x 16 linhas, desachatada verticalmente) */
+/* Logo 1 do Windows Tweaker calibrada para a proporcao real da fonte (24 colunas x 9 linhas) */
 static const char *BANNER_ART[] = {
-    "      ▄███▄  ▄███▄",
-    "      ████████████",
-    "      ████████████",
-    "      ████████████",
+    "      ▄████▄▄████▄",
+    "     ▀████████████▀",
     "      ▀██████████▀",
-    " ▄▄▄▄▄ ██████████ ▄▄▄▄▄",
     "▄██████████████████████▄",
     "████████████████████████",
-    "████████████████████████",
     " ▀████████████████████▀",
-    "  ████████████████████",
     "  ████████▀██▀████████",
-    "  ███████  ██  ███████",
-    "   ▀▀█▀▀  ███   ▀▀█▀▀",
-    "         ▄██▀",
+    "   ▀▀█▀▀  ▄██   ▀▀█▀▀",
     "         ███"
 };
-#define BANNER_ROWS 16
+#define BANNER_ROWS 9
 
 static const char *BANNER_TEXT[] = {
-    "",
-    "",
-    "",
-    "",
     "",
     "Windows Tweaker",
     "o seu PC, limpo e otimizado",
     "",
     "diagnostico, limpeza de disco e",
-    "ajustes do Windows, direto em C"
+    "ajustes do Windows, direto em C",
+    "",
+    "",
+    ""
 };
-#define BANNER_TEXT_ROWS 10
+#define BANNER_TEXT_ROWS 9
 
 /* Paleta do degrade diagonal identica ao FIRE do Turtle: vermelho -> laranja -> amarelo */
 static const int FIRE[3][3] = {
@@ -167,7 +159,7 @@ void ui_banner(void) {
             if (pad < 2) pad = 2;
             for (int s = 0; s < pad; s++) putchar(' ');
 
-            if (text_idx == 5) {
+            if (text_idx == 1) {
                 printf(ANSI_BOLD "%s" ANSI_RESET, BANNER_TEXT[text_idx]);
             } else {
                 printf(ANSI_DIM "%s" ANSI_RESET, BANNER_TEXT[text_idx]);
