@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 /* ============================================================================
- * WINDOWS TWEAKER - TERMINAL UI (TURTLE STYLE + 100% SETAS & ENTER)
+ * WINDOWS TWEAKER - TERMINAL UI (TURTLE STYLE + CURSOR FIXO WIN32)
  * ============================================================================ */
 
 #define ANSI_RESET   "\x1b[0m"
@@ -54,8 +54,17 @@ void ui_box(const char **lines, int line_count, const char *title);
 /* Barra de uso limpa */
 void ui_bar(double ratio, int width, char *out_buf, size_t buf_size);
 
-/* Seletores 100% controlados por Setas (CIMA/BAIXO) e ENTER */
-int  ui_select(const char *title, const char **labels, const char **explanations, int count);
+/* Seletor de 1 linha por opcao com coordenada fixa do console (nunca duplica linhas) */
+int  ui_select(const char *title, const char **labels, int count);
+
+/* Tela exibida ao abrir uma opcao: mostra o resumo do que faz, avisa que primeiro
+ * so analisa (alteracoes apenas com permissao), e pergunta Prosseguir ou Sair */
+bool ui_open_tool_screen(
+    const char *tool_title,
+    const char *what_it_does,
+    const char *what_happens_after
+);
+
 bool ui_confirm_arrows(const char *question, const char *detail_what_will_happen);
 void ui_pause_enter(const char *msg);
 

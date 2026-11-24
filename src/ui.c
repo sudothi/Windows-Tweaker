@@ -85,6 +85,19 @@ void ui_cleanup(void) {
 }
 
 void ui_clear(void) {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut != INVALID_HANDLE_VALUE) {
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
+            DWORD cells = (DWORD)csbi.dwSize.X * (DWORD)csbi.dwSize.Y;
+            DWORD written = 0;
+            COORD home = {0, 0};
+            FillConsoleOutputCharacterA(hOut, ' ', cells, home, &written);
+            FillConsoleOutputAttribute(hOut, csbi.wAttributes, cells, home, &written);
+            SetConsoleCursorPosition(hOut, home);
+            return;
+        }
+    }
     printf("\x1b[2J\x1b[H");
     fflush(stdout);
 }
@@ -330,38 +343,53 @@ void ui_bar(double ratio, int width, char *out_buf, size_t buf_size) {
     snprintf(out_buf + pos, buf_size - pos, "%s", ANSI_RESET);
 }
 
-int ui_select(const char *title, const char **labels, const char **explanations, int count) {
+/* Menu de 1 linha por item com SetConsoleCursorPosition (impossivel duplicar linhas) */
+int ui_select(const char *title, const char **labels, int count) {
     int selected = 0;
 
-    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE hIn  = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD in_mode = 0;
     if (!GetConsoleMode(hIn, &in_mode)) {
         return count - 1;
     }
 
     printf("\n" ANSI_GREEN "◆" ANSI_RESET " " ANSI_BOLD "%s" ANSI_RESET
-           "  " ANSI_DIM "(Use as setas ↑ / ↓ para mover e ENTER para confirmar)" ANSI_RESET "\n",
-           title);
+           "  " ANSI_DIM "(Setas ↑/↓ e ENTER)" ANSI_RESET "\n");
     printf("  " ANSI_DIM "──────────────────────────────────────────────────────────────────────────" ANSI_RESET "\n");
 
     printf("\x1b[?25l");
-    /* Reserva 2 linhas por item para redesenho in-place */
+    fflush(stdout);
+
+    /* Reserva espaco no buffer do console antes de capturar a coordenada Y inicial */
     for (int i = 0; i < count; i++) {
-        printf("\n\n");
+        printf("\n");
+    }
+    fflush(stdout);
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    COORD start_pos = {0, 0};
+    bool has_coord = false;
+    if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
+        start_pos.X = 0;
+        start_pos.Y = (SHORT)(csbi.dwCursorPosition.Y - count);
+        if (start_pos.Y < 0) start_pos.Y = 0;
+        has_coord = true;
     }
 
     for (;;) {
-        printf("\x1b[%dA", count * 2);
+        if (has_coord) {
+            SetConsoleCursorPosition(hOut, start_pos);
+        } else {
+            printf("\x1b[%dA", count);
+        }
 
         for (int i = 0; i < count; i++) {
-            const char *desc = (explanations && explanations[i]) ? explanations[i] : "";
             printf("\x1b[2K\r");
             if (i == selected) {
                 printf("  " ANSI_GREEN ANSI_BOLD "❯ %s" ANSI_RESET "\n", labels[i]);
-                printf("\x1b[2K\r    " ANSI_CYAN "╰─ O que faz: %s" ANSI_RESET "\n", desc);
             } else {
                 printf("    " ANSI_DIM "%s" ANSI_RESET "\n", labels[i]);
-                printf("\x1b[2K\r    " ANSI_DIM "   %s" ANSI_RESET "\n", "");
             }
         }
         fflush(stdout);
@@ -377,7 +405,7 @@ int ui_select(const char *title, const char **labels, const char **explanations,
         } else if (ch == 13) { /* ENTER */
             printf("\x1b[?25h");
             return selected;
-        } else if (ch == 27) { /* ESC -> ultima opcao (Voltar/Sair) */
+        } else if (ch == 27) { /* ESC */
             printf("\x1b[?25h");
             return count - 1;
         } else if (ch == 'w' || ch == 'W' || ch == 'k' || ch == 'K') {
@@ -394,6 +422,37 @@ int ui_select(const char *title, const char **labels, const char **explanations,
     }
 }
 
+bool ui_open_tool_screen(
+    const char *tool_title,
+    const char *what_it_does,
+    const char *what_happens_after
+) {
+    ui_clear();
+    ui_banner();
+
+    ui_header_box(tool_title, "Veja abaixo como esta etapa funciona antes de prosseguir:");
+
+    printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_BOLD "O que sera feito agora:" ANSI_RESET "\n");
+    printf("    %s\n\n", what_it_does);
+
+    printf("  " ANSI_CYAN "·" ANSI_RESET " " ANSI_BOLD "E depois da analise?" ANSI_RESET "\n");
+    printf("    %s\n\n", what_happens_after);
+
+    const char *notice_lines[] = {
+        ANSI_GREEN "MODO SEGURO:" ANSI_RESET " Inicialmente e feita apenas a analise do seu PC.",
+        "Nenhum arquivo e apagado e nenhuma configuracao e alterada sem a sua permissao."
+    };
+    ui_box(notice_lines, 2, "Aviso de Seguranca");
+
+    const char *opts[] = {
+        "Prosseguir e iniciar analise",
+        "Sair e voltar ao Menu Principal"
+    };
+
+    int choice = ui_select("DESEJA CONTINUAR?", opts, 2);
+    return (choice == 0);
+}
+
 bool ui_confirm_arrows(const char *question, const char *detail_what_will_happen) {
     printf("\n  " ANSI_YELLOW "!" ANSI_RESET " " ANSI_BOLD "%s" ANSI_RESET "\n", question);
     if (detail_what_will_happen && detail_what_will_happen[0] != '\0') {
@@ -401,15 +460,11 @@ bool ui_confirm_arrows(const char *question, const char *detail_what_will_happen
     }
 
     const char *opts[] = {
-        "Sim, confirmar e executar agora",
+        "Sim, autorizar e executar agora",
         "Nao, cancelar e voltar"
     };
-    const char *descs[] = {
-        detail_what_will_happen ? detail_what_will_happen : "Executa a operacao selecionada",
-        "Cancela a operacao sem alterar nem apagar nada"
-    };
 
-    int choice = ui_select("CONFIRMAR OPERACAO", opts, descs, 2);
+    int choice = ui_select("CONFIRMAR COM SUA PERMISSAO", opts, 2);
     return (choice == 0);
 }
 

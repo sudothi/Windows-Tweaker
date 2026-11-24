@@ -7,7 +7,7 @@
 #include <string.h>
 #include <windows.h>
 
-#define WT_VERSION "1.3.0"
+#define WT_VERSION "1.4.0"
 
 typedef struct {
     int  points_lost;
@@ -141,7 +141,7 @@ static void render_summary_box(
     n++;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Lixo temporario (Cache)  " ANSI_BOLD "%s" ANSI_RESET " prontos para limpar agora",
+             "Lixo temporario (Cache)  " ANSI_BOLD "%s" ANSI_RESET " prontos para limpar com sua permissao",
              cache_str);
     box_lines[n] = line_storage_buf[n];
     n++;
@@ -171,15 +171,15 @@ static void render_summary_box(
         }
     }
 
-    ui_box(box_lines, n, "Resumo do Diagnostico");
+    ui_box(box_lines, n, "Resultado da Analise (Nada foi alterado ainda)");
 }
 
-/* Tela de Limpeza e Exclusao controlada 100% por Setas (CIMA/BAIXO) e ENTER */
+/* Tela de Limpeza e Exclusao: Primeiro analisa e mostra, depois permite escolher com permissao */
 static void interactive_file_removal_screen(storage_report_t *st, bool already_scanned) {
     if (!already_scanned) {
         ui_clear();
         ui_banner();
-        ui_step(1, 1, "Procurando lixo temporario e arquivos grandes esquecidos no disco");
+        ui_step(1, 1, "Analisando disco, pastas de cache temporario e arquivos grandes (somente leitura)");
         storage_run_audit(st, 50, 30, NULL);
     }
 
@@ -188,26 +188,18 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
         ui_banner();
         storage_print_removal_preview(st);
 
-        /* Monta a lista de opcoes navegavel por setas:
-         * [0]   -> Limpar todas as pastas de Cache Temporario
-         * [1..N]-> Excluir cada arquivo grande individualmente
-         * [fim] -> Voltar ao Menu Principal
-         */
-        char labels_buf[MAX_COLD_FILES + 3][220];
-        char descs_buf[MAX_COLD_FILES + 3][256];
+        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Analise concluida. Nenhum arquivo foi apagado ainda. Escolha abaixo o que deseja fazer:" ANSI_RESET "\n");
+
+        char labels_buf[MAX_COLD_FILES + 3][120];
         const char *labels[MAX_COLD_FILES + 3];
-        const char *descs[MAX_COLD_FILES + 3];
         int total_opts = 0;
 
         char cache_sz[32];
         ui_format_bytes(st->safe_cleanable_bytes, cache_sz, sizeof(cache_sz));
 
         snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                 "[LIMPAR CACHES] Apagar todo o lixo temporario das pastas acima (%s)", cache_sz);
-        snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
-                 "Apaga arquivos temporarios em %%TEMP%%, Win\\Temp, CrashDumps e DirectX (nao apaga documentos pessoais).");
+                 "Limpar todas as pastas de cache temporario acima (%s)", cache_sz);
         labels[total_opts] = labels_buf[total_opts];
-        descs[total_opts]  = descs_buf[total_opts];
         total_opts++;
 
         for (int i = 0; i < st->cold_file_count; i++) {
@@ -215,33 +207,34 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
             char fsz[32];
             ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
 
+            /* Encurta caminho longo para caber em 1 linha sem quebrar no terminal */
+            const char *p = cf->path;
+            char short_path[58];
+            size_t plen = strlen(p);
+            if (plen > 54) {
+                snprintf(short_path, sizeof(short_path), "...%s", p + (plen - 51));
+            } else {
+                snprintf(short_path, sizeof(short_path), "%s", p);
+            }
+
             if (cf->deleted) {
                 snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                         "[JA EXCLUIDO]   %s (%s)", cf->path, fsz);
-                snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
-                         "Este arquivo ja foi excluido permanentemente da pasta de origem.");
+                         "[JA EXCLUIDO] %s (%s)", short_path, fsz);
             } else {
                 snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                         "[EXCLUIR ARQUIVO] %-10s (%3d dias sem abrir) -> %s",
-                         fsz, cf->days_unused, cf->path);
-                snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
-                         "Exclui permanentemente este arquivo de %s direto da pasta %s.", fsz, cf->path);
+                         "Excluir arquivo: %-10s (%3d dias) -> %s", fsz, cf->days_unused, short_path);
             }
             labels[total_opts] = labels_buf[total_opts];
-            descs[total_opts]  = descs_buf[total_opts];
             total_opts++;
         }
 
         snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                 "Voltar ao Menu Principal");
-        snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
-                 "Sai da tela de limpeza e volta para a tela inicial do Windows Tweaker.");
+                 "Sair e voltar ao Menu Principal");
         labels[total_opts] = labels_buf[total_opts];
-        descs[total_opts]  = descs_buf[total_opts];
         int back_idx = total_opts;
         total_opts++;
 
-        int sel = ui_select("ESCOLHA COM AS SETAS O QUE VOCE QUER APAGAR", labels, descs, total_opts);
+        int sel = ui_select("ESCOLHA O QUE DESEJA LIMPAR (PEDIRA SUA PERMISSAO ANTES)", labels, total_opts);
 
         if (sel == back_idx) {
             break;
@@ -250,9 +243,9 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
         if (sel == 0) {
             char detail[200];
             snprintf(detail, sizeof(detail),
-                     "Vai apagar os arquivos temporarios desbloqueados de %%TEMP%%, Win\\Temp, CrashDumps e DirectX (%s).",
+                     "Apagara os arquivos temporarios de %%TEMP%%, Win\\Temp, CrashDumps e DirectX (%s).",
                      cache_sz);
-            if (ui_confirm_arrows("Tem certeza que deseja limpar todas as pastas de cache temporario?", detail)) {
+            if (ui_confirm_arrows("Autoriza a limpeza das pastas de cache temporario agora?", detail)) {
                 printf("\n");
                 uint64_t freed = 0;
                 uint32_t files = 0, locked = 0;
@@ -263,7 +256,7 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
                 printf("\n");
                 ui_ok(ANSI_BOLD "Limpeza concluida:" ANSI_RESET " %u arquivos removidos (%s liberados no disco)", files, freed_s);
                 if (locked > 0) {
-                    ui_info("%u arquivos temporarios foram ignorados porque estao abertos/em uso pelo Windows agora.", locked);
+                    ui_info("%u arquivos temporarios foram mantidos porque estao em uso pelo Windows agora.", locked);
                 }
                 ui_pause_enter("Continuar");
                 storage_run_audit(st, 50, 30, NULL);
@@ -282,9 +275,9 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
                 ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
                 char q[320];
                 char detail[360];
-                snprintf(q, sizeof(q), "Excluir permanentemente o arquivo '%s'?", cf->path);
+                snprintf(q, sizeof(q), "Autoriza excluir permanentemente o arquivo '%s'?", cf->path);
                 snprintf(detail, sizeof(detail),
-                         "O arquivo sera apagado definitivamente da pasta de origem e voce vai liberar %s no disco.", fsz);
+                         "O arquivo sera apagado definitivamente da pasta de origem e liberara %s no disco.", fsz);
 
                 if (ui_confirm_arrows(q, detail)) {
                     uint64_t freed_b = 0;
@@ -307,22 +300,20 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
     }
 }
 
-/* Tela de Otimizacao do Windows controlada 100% por Setas e ENTER */
+/* Tela de Otimizacao do Windows: Primeiro analisa e mostra, depois pede permissao para aplicar */
 static void interactive_optimize_screen(void) {
     ui_clear();
     ui_banner();
     tweaks_apply_safe_optimizations(true);
 
+    printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Analise concluida. Nenhuma chave do Registro foi alterada ainda." ANSI_RESET "\n");
+
     const char *opt_labels[] = {
-        "Aplicar as 2 otimizacoes recomendadas agora (Menus 20ms + Desligar GameDVR)",
-        "Voltar ao Menu Principal sem alterar nada"
-    };
-    const char *opt_descs[] = {
-        "Grava MenuShowDelay=20 e AppCaptureEnabled=0 no Registro do seu usuario (HKEY_CURRENT_USER).",
-        "Mantem as configuracoes atuais do Windows e volta para o inicio."
+        "Autorizar e aplicar as 2 otimizacoes no Registro agora",
+        "Sair e voltar ao Menu Principal sem alterar nada"
     };
 
-    int sel = ui_select("ESCOLHA COM AS SETAS O QUE DESEJA FAZER", opt_labels, opt_descs, 2);
+    int sel = ui_select("DESEJA APLICAR ESTES AJUSTES?", opt_labels, 2);
     if (sel == 0) {
         printf("\n");
         tweaks_apply_safe_optimizations(false);
@@ -334,19 +325,19 @@ static void print_help(void) {
     printf(ANSI_BOLD "Uso:" ANSI_RESET " windows-tweaker [comando] [opcoes]\n\n");
     printf(ANSI_BOLD "Como usar" ANSI_RESET "\n");
     printf("  windows-tweaker             abre o menu interativo controlado pelas setas (↑/↓) e Enter\n");
-    printf("  windows-tweaker scan        executa o diagnostico completo de uma vez\n");
-    printf("  windows-tweaker limpar      abre a tela de limpeza de caches e exclusao de arquivos grandes\n");
-    printf("  windows-tweaker otimizar    mostra ou aplica os ajustes do Windows e Jogos\n");
+    printf("  windows-tweaker scan        executa a analise completa (somente leitura)\n");
+    printf("  windows-tweaker limpar      analisa os caches e arquivos grandes e pede permissao para limpar\n");
+    printf("  windows-tweaker otimizar    analisa ou aplica os ajustes do Windows e Jogos\n");
     printf("  windows-tweaker startup     lista todos os programas que iniciam sozinhos no boot\n");
     printf("  windows-tweaker hardware    mostra processador, memoria RAM, placa-mae e BIOS\n\n");
     printf(ANSI_BOLD "Opcoes para uso via script" ANSI_RESET "\n");
-    printf("  --dry-run                   apenas simula sem apagar nem alterar nada\n");
+    printf("  --dry-run                   apenas analisa sem apagar nem alterar nada\n");
     printf("  --apply, --yes              executa a limpeza de caches ou aplica as otimizacoes direto\n");
     printf("  --min-mb 50                 tamanho minimo em MB para listar arquivos grandes (padrao: 50)\n");
     printf("  --days 30                   dias sem uso para listar arquivos grandes esquecidos (padrao: 30)\n");
 }
 
-/* Menu Principal 100% controlado pelas setas (CIMA/BAIXO) e ENTER */
+/* Menu Principal: 1 linha por item (nunca quebra linha) e resumo exibido ao abrir cada opcao */
 static int interactive_menu(void) {
     static const char *MAIN_LABELS[] = {
         "1. Diagnostico Completo do PC (Nota de 0 a 100 explicada)",
@@ -356,20 +347,15 @@ static int interactive_menu(void) {
         "5. Hardware, Memoria RAM e BIOS (CPU, Virtualizacao e Secure Boot)",
         "0. Sair do Windows Tweaker"
     };
-    static const char *MAIN_DESCS[] = {
-        "Analisa Hardware, Disco e Windows e explica exatamente o motivo de cada ponto perdido na nota.",
-        "Mostra as pastas de lixo temporario e cada arquivo grande (>50MB) para voce escolher o que apagar com Enter.",
-        "Mostra o que esta lento no Registro do Windows (MenuShowDelay 400ms e Xbox GameDVR) e aplica a correcao.",
-        "Lista todos os programas configurados para abrir sozinhos assim que voce liga o computador.",
-        "Mostra o modelo exato do seu processador (__cpuid), quanto de RAM esta em uso e configuracoes da BIOS.",
-        "Fecha o programa e volta para o terminal."
-    };
 
     for (;;) {
         ui_clear();
         ui_banner();
 
-        int choice = ui_select("MENU PRINCIPAL - O QUE VOCE QUER FAZER?", MAIN_LABELS, MAIN_DESCS, 6);
+        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Modo Seguro: Ao abrir qualquer opcao, inicialmente e feita apenas a analise do seu PC." ANSI_RESET "\n");
+        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Qualquer limpeza ou alteracao so e executada depois, com a sua permissao." ANSI_RESET "\n");
+
+        int choice = ui_select("MENU PRINCIPAL - ESCOLHA UMA OPCAO", MAIN_LABELS, 6);
 
         if (choice == 5) {
             printf("\n  " ANSI_GREEN "✓" ANSI_RESET " Ate mais!\n\n");
@@ -377,6 +363,14 @@ static int interactive_menu(void) {
         }
 
         if (choice == 0) {
+            if (!ui_open_tool_screen(
+                    "1. DIAGNOSTICO COMPLETO DO PC",
+                    "Vai ler as informacoes do seu Processador, Memoria RAM, BIOS, medir o espaco ocupado por lixo temporario no disco e checar as configuracoes de desempenho do Windows.",
+                    "Voce vera um relatorio explicando cada item e o motivo da sua nota de 0 a 100. Depois da analise, voce podera escolher se quer corrigir os problemas encontrados."
+                )) {
+                continue;
+            }
+
             ui_clear();
             ui_banner();
 
@@ -384,34 +378,28 @@ static int interactive_menu(void) {
             storage_report_t  st;
             tweaks_report_t   tw;
 
-            ui_step(1, 3, "HARDWARE, MEMORIA RAM E BIOS");
+            ui_step(1, 3, "HARDWARE, MEMORIA RAM E BIOS (SOMENTE LEITURA)");
             hardware_run_audit(&hw);
             hardware_print_report(&hw);
 
-            ui_step(2, 3, "DISCO, CACHES TEMPORARIOS E ARQUIVOS ESQUECIDOS");
+            ui_step(2, 3, "DISCO, CACHES TEMPORARIOS E ARQUIVOS ESQUECIDOS (SOMENTE LEITURA)");
             storage_run_audit(&st, 50, 30, NULL);
             storage_print_report(&st);
 
-            ui_step(3, 3, "CONFIGURACOES DO WINDOWS E JOGOS");
+            ui_step(3, 3, "CONFIGURACOES DO WINDOWS E JOGOS (SOMENTE LEITURA)");
             tweaks_run_audit(&tw);
             tweaks_print_report(&tw);
 
             render_summary_box(&hw, &st, &tw);
 
             const char *post_labels[] = {
-                "Abrir Limpeza de Caches e Arquivos Pesados agora",
-                "Abrir Otimizacao do Windows e Jogos agora",
+                "Ir para Limpeza de Caches e Arquivos Pesados (escolher o que apagar)",
+                "Ir para Otimizacao do Windows e Jogos (aplicar ajustes com sua permissao)",
                 "Ver Lista dos Programas que Iniciam no Boot",
                 "Voltar ao Menu Principal"
             };
-            const char *post_descs[] = {
-                "Permite escolher com as setas quais caches ou arquivos grandes voce quer apagar.",
-                "Permite aplicar o ajuste de Menus 20ms e desligar a captura oculta do Xbox GameDVR.",
-                "Mostra os programas em HKCU\\Run e HKLM\\Run que estao abrindo sozinhos com o Windows.",
-                "Volta para a tela inicial do Windows Tweaker."
-            };
 
-            int next_act = ui_select("PROXIMO PASSO RECOMENDADO", post_labels, post_descs, 4);
+            int next_act = ui_select("ANALISE CONCLUIDA - O QUE DESEJA FAZER AGORA?", post_labels, 4);
             if (next_act == 0) {
                 interactive_file_removal_screen(&st, true);
             } else if (next_act == 1) {
@@ -423,11 +411,32 @@ static int interactive_menu(void) {
                 ui_pause_enter("Voltar ao Menu Principal");
             }
         } else if (choice == 1) {
+            if (!ui_open_tool_screen(
+                    "2. LIMPAR CACHES TEMPORARIOS E EXCLUIR ARQUIVOS PESADOS",
+                    "Vai escanear as pastas de lixo temporario do Windows (%TEMP%, Win\\Temp, CrashDumps, DirectX) e procurar arquivos grandes (>50 MB) nas suas pastas que nao sao usados ha mais de 30 dias.",
+                    "Mostrara a lista completa do que foi encontrado. Nada sera apagado durante a analise: voce escolhida na tela seguinte exatamente o que autoriza remover."
+                )) {
+                continue;
+            }
             storage_report_t st;
             interactive_file_removal_screen(&st, false);
         } else if (choice == 2) {
+            if (!ui_open_tool_screen(
+                    "3. OTIMIZAR WINDOWS E JOGOS",
+                    "Vai verificar no Registro do Windows o tempo de resposta dos menus (MenuShowDelay) e se a gravacao em segundo plano do Xbox GameDVR esta consumindo recursos da placa de video.",
+                    "Mostrara o valor atual e o valor otimizado de cada chave. Os ajustes so serao gravados se voce autorizar na etapa seguinte."
+                )) {
+                continue;
+            }
             interactive_optimize_screen();
         } else if (choice == 3) {
+            if (!ui_open_tool_screen(
+                    "4. PROGRAMAS NA INICIALIZACAO (BOOT)",
+                    "Vai ler as chaves HKCU\\Run e HKLM\\Run do Registro do Windows para listar todos os programas que abrem sozinhos quando voce liga o computador.",
+                    "Exibira a lista completa com o nome e o caminho do executavel de cada programa (apenas leitura e diagnostico)."
+                )) {
+                continue;
+            }
             ui_clear();
             ui_banner();
             tweaks_report_t tw;
@@ -435,6 +444,13 @@ static int interactive_menu(void) {
             tweaks_print_startup(&tw);
             ui_pause_enter("Voltar ao Menu Principal");
         } else if (choice == 4) {
+            if (!ui_open_tool_screen(
+                    "5. HARDWARE, MEMORIA RAM E BIOS",
+                    "Vai consultar diretamente os registradores do seu processador (__cpuid), medir o uso atual da memoria RAM fisica e verificar na BIOS se a Virtualizacao e o Secure Boot estao ativos.",
+                    "Exibira o relatorio detalhado do seu hardware com recomendacoes claras (apenas leitura)."
+                )) {
+                continue;
+            }
             ui_clear();
             ui_banner();
             hardware_report_t hw;
