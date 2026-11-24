@@ -41,11 +41,11 @@ static const char *BANNER_TEXT[] = {
 };
 #define BANNER_TEXT_ROWS 9
 
-/* Paleta do degrade diagonal identica ao FIRE do Turtle: vermelho -> laranja -> amarelo */
+/* Degrade monocromatico do trevo: 3 tons de Verde Esmeralda (Profundo -> Vivo -> Menta Claro) */
 static const int FIRE[3][3] = {
-    {226, 38,  38},
-    {249, 115, 22},
-    {250, 204, 21}
+    {5,   150, 105}, /* #059669 Esmeralda Profundo */
+    {16,  185, 129}, /* #10B981 Esmeralda Vivo     */
+    {110, 231, 183}  /* #6EE7B7 Menta Claro        */
 };
 
 bool ui_init(void) {
