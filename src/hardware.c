@@ -51,7 +51,6 @@ static void query_cpuid_info(hardware_report_t *report) {
         const char *p = brand;
         while (*p == ' ') p++;
         strncpy(report->cpu_brand, p, sizeof(report->cpu_brand) - 1);
-        /* Remove trailing spaces */
         size_t len = strlen(report->cpu_brand);
         while (len > 0 && report->cpu_brand[len - 1] == ' ') {
             report->cpu_brand[--len] = '\0';
@@ -120,54 +119,74 @@ void hardware_run_audit(hardware_report_t *report) {
     report->probe_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
     char summary[160];
-    snprintf(summary, sizeof(summary), "Hardware detectado: %s (%u threads)", report->cpu_brand, report->logical_cores);
+    snprintf(summary, sizeof(summary), "Hardware analisado (%s · %u threads)", report->cpu_brand, report->logical_cores);
     ui_spinner_stop(summary, true);
 }
 
 void hardware_print_report(const hardware_report_t *report) {
-    ui_ok("Processador : " ANSI_BOLD "%s" ANSI_RESET " " ANSI_DIM "(%u threads · %s)" ANSI_RESET,
-          report->cpu_brand, report->logical_cores, report->avx2_supported ? "AVX2 256-bit" : "SSE2");
+    char cpu_val[128];
+    snprintf(cpu_val, sizeof(cpu_val), "%s (%u threads · %s)",
+             report->cpu_brand, report->logical_cores, report->avx2_supported ? "AVX2 Ativo" : "SSE2");
+    ui_item_block(
+        true,
+        "Processador (CPU)",
+        cpu_val,
+        "Modelo lido direto do silicio via instrucao __cpuid e suporte a vetores matematicos AVX2.",
+        "Operando com todas as instrucoes vetoriais habilitadas."
+    );
 
-    ui_info("Placa-mae   : %s %s " ANSI_DIM "(BIOS %s)" ANSI_RESET,
-            report->board_vendor, report->board_product, report->bios_version);
-
-    char ram_used_s[32], ram_tot_s[32], ram_bar[256];
+    char ram_used_s[32], ram_tot_s[32], ram_bar[256], ram_val[384];
     ui_format_bytes(report->ram_used_bytes, ram_used_s, sizeof(ram_used_s));
     ui_format_bytes(report->ram_total_bytes, ram_tot_s, sizeof(ram_tot_s));
     ui_bar((double)report->ram_load_pct / 100.0, 18, ram_bar, sizeof(ram_bar));
+    snprintf(ram_val, sizeof(ram_val), "[%s] %u%% em uso (%s de %s)",
+             ram_bar, report->ram_load_pct, ram_used_s, ram_tot_s);
 
-    if (report->ram_load_pct > 85) {
-        ui_warn("Memoria RAM : [%s] " ANSI_BOLD "%u%%" ANSI_RESET " (%s usados de %s)",
-                ram_bar, report->ram_load_pct, ram_used_s, ram_tot_s);
-        ui_line(ANSI_DIM "Por que importa: acima de 85%% o Windows passa a usar o SSD como memoria (pagefile), causando travadinhas." ANSI_RESET);
-    } else {
-        ui_ok("Memoria RAM : [%s] " ANSI_BOLD "%u%%" ANSI_RESET " (%s usados de %s)",
-              ram_bar, report->ram_load_pct, ram_used_s, ram_tot_s);
-    }
+    ui_item_block(
+        report->ram_load_pct <= 85,
+        "Memoria RAM Fisica",
+        ram_val,
+        "Quantidade de memoria RAM ocupada neste momento pelos programas abertos.",
+        report->ram_load_pct <= 85
+            ? "Folga de memoria saudavel para abrir jogos e aplicacoes pesadas."
+            : "Uso alto de RAM! Desative programas que iniciam sozinhos no boot para liberar memoria."
+    );
 
     uint64_t days  = report->uptime_seconds / 86400;
     uint64_t hours = (report->uptime_seconds % 86400) / 3600;
     uint64_t mins  = (report->uptime_seconds % 3600) / 60;
-    if (days >= 7) {
-        ui_warn("Tempo ligado: " ANSI_BOLD "%llud %lluh %llum" ANSI_RESET " sem reiniciar",
-                (unsigned long long)days, (unsigned long long)hours, (unsigned long long)mins);
-        ui_line(ANSI_DIM "Por que importa: o 'Inicio Rapido' do Windows acumula cache de drivers. Reiniciar limpa o kernel." ANSI_RESET);
-    } else {
-        ui_ok("Tempo ligado: " ANSI_BOLD "%llud %lluh %llum" ANSI_RESET,
-              (unsigned long long)days, (unsigned long long)hours, (unsigned long long)mins);
-    }
+    char up_val[128];
+    snprintf(up_val, sizeof(up_val), "%llud %lluh %llum sem reiniciar (Placa-mae %s · BIOS %s)",
+             (unsigned long long)days, (unsigned long long)hours, (unsigned long long)mins,
+             report->board_product, report->bios_version);
 
-    if (report->virt_firmware_enabled) {
-        ui_ok("Virtualizacao na BIOS (AMD-V / VT-x): " ANSI_BOLD "Ativa" ANSI_RESET);
-    } else {
-        ui_warn("Virtualizacao na BIOS (AMD-V / VT-x): " ANSI_BOLD "Desativada" ANSI_RESET);
-        ui_line(ANSI_DIM "Por que importa: sem ela, Docker, WSL2 e maquinas virtuais nao funcionam ou ficam muito lentos." ANSI_RESET);
-    }
+    ui_item_block(
+        days < 7,
+        "Tempo Ligado & BIOS",
+        up_val,
+        "Tempo continuo desde a ultima reinicializacao completa do kernel do Windows.",
+        days < 7
+            ? "Tempo ligado normal."
+            : "Mais de 7 dias sem reiniciar. Clique em 'Reiniciar' no Windows para limpar a memoria de drivers."
+    );
 
-    if (report->secure_boot_enabled) {
-        ui_ok("UEFI Secure Boot: " ANSI_BOLD "Ativo" ANSI_RESET);
-    } else {
-        ui_warn("UEFI Secure Boot: " ANSI_BOLD "Inativo na BIOS" ANSI_RESET);
-        ui_line(ANSI_DIM "Por que importa: exigido por jogos com anti-cheat de kernel (Valorant/Vanguard, EA, Faceit)." ANSI_RESET);
-    }
+    ui_item_block(
+        report->virt_firmware_enabled,
+        "Virtualizacao na BIOS",
+        report->virt_firmware_enabled ? "Ativada (AMD-V / VT-x)" : "Desativada na BIOS",
+        "Permite rodar maquinas virtuais, WSL2 (Linux), Docker e emuladores de Android na velocidade maxima.",
+        report->virt_firmware_enabled
+            ? "Sua BIOS ja esta com a virtualizacao do processador ligada."
+            : "Entre na BIOS ao ligar o PC e ative 'SVM Mode' (AMD) ou 'Intel Virtualization'."
+    );
+
+    ui_item_block(
+        report->secure_boot_enabled,
+        "UEFI Secure Boot",
+        report->secure_boot_enabled ? "Ativado na BIOS" : "Inativo na BIOS",
+        "Protecao de inicializacao da placa-mae exigida por anti-cheats modernos (Valorant, EA FC, Faceit).",
+        report->secure_boot_enabled
+            ? "Secure Boot ativo e pronto para jogos competitivos."
+            : "Se voce joga titulos com anti-cheat de kernel, ative o 'Secure Boot' na aba Boot/Security da BIOS."
+    );
 }

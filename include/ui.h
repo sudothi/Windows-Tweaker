@@ -6,9 +6,7 @@
 #include <stdbool.h>
 
 /* ============================================================================
- * WINDOWS TWEAKER - TERMINAL UI (BASEADO EM SUDOTHI/TURTLE apps/cli/src/ui.mjs)
- * Sem blocos de fundo azul. Apenas cores limpas, icone half-block em degrade
- * diagonal, ◆ passos, ✓/!/✗/·/│, spinner de uma linha e box() dinamico.
+ * WINDOWS TWEAKER - TERMINAL UI (TURTLE STYLE + 100% SETAS & ENTER)
  * ============================================================================ */
 
 #define ANSI_RESET   "\x1b[0m"
@@ -23,32 +21,43 @@
 /* Console init & restore */
 bool ui_init(void);
 void ui_cleanup(void);
+void ui_clear(void);
 
-/* Banner no estilo exato do Turtle (icone half-block em degrade diagonal + texto ao lado) */
+/* Banner com o trevo de 3 folhas em degrade monocromatico verde esmeralda */
 void ui_banner(void);
 
-/* Primitivas identicas ao apps/cli/src/ui.mjs do Turtle */
+/* Secoes e blocos estruturados faceis de ler */
 void ui_step(int n, int total, const char *title);
+void ui_header_box(const char *title, const char *subtitle);
+void ui_item_block(
+    bool is_ok,
+    const char *name,
+    const char *current_value,
+    const char *what_it_is,
+    const char *action_hint
+);
+
+/* Primitivas de linha */
 void ui_ok(const char *fmt, ...);
 void ui_warn(const char *fmt, ...);
 void ui_fail(const char *fmt, ...);
 void ui_info(const char *fmt, ...);
 void ui_line(const char *fmt, ...);
 
-/* Spinner de uma linha (\r  ⠋ texto\x1b[K) -> fecha com ui_ok ou ui_fail */
+/* Spinner de uma linha */
 void ui_spinner_update(int frame, const char *text);
 void ui_spinner_stop(const char *text, bool good);
 
 /* Caixa com borda dinamica igual ao box(lines, title) do Turtle */
 void ui_box(const char **lines, int line_count, const char *title);
 
-/* Barra de uso limpa sem fundo colorido */
+/* Barra de uso limpa */
 void ui_bar(double ratio, int width, char *out_buf, size_t buf_size);
 
-/* Prompts de terminal identicos ao prompter() do Turtle */
-void ui_ask(const char *question, const char *def_val, char *out_buf, size_t buf_size);
-bool ui_confirm(const char *question, bool def_val);
-void ui_pause(void);
+/* Seletores 100% controlados por Setas (CIMA/BAIXO) e ENTER */
+int  ui_select(const char *title, const char **labels, const char **explanations, int count);
+bool ui_confirm_arrows(const char *question, const char *detail_what_will_happen);
+void ui_pause_enter(const char *msg);
 
 /* Formatador de bytes (KB, MB, GB, TB) */
 void ui_format_bytes(uint64_t bytes, char *out_buf, size_t buf_size);

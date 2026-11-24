@@ -15,6 +15,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 if not exist bin mkdir bin
+taskkill /f /im windows-tweaker.exe >nul 2>nul
 
 echo [BUILD] Compiling windows-tweaker.exe (MSVC C11 /W4 /O2)...
 cl.exe /nologo /W4 /O2 /utf-8 /D_CRT_SECURE_NO_WARNINGS /Iinclude ^

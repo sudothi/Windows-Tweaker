@@ -189,100 +189,128 @@ void tweaks_run_audit(tweaks_report_t *report) {
     report->audit_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
     char summary[160];
-    snprintf(summary, sizeof(summary), "Configuracoes do Windows verificadas (%d programas no boot, %d ajustes disponiveis)",
+    snprintf(summary, sizeof(summary), "Configuracoes do Windows analisadas (%d programas no boot, %d ajustes recomendados)",
              report->startup_count, report->issues_detected);
     ui_spinner_stop(summary, true);
 }
 
 void tweaks_print_report(const tweaks_report_t *report) {
-    /* 1. Power Plan */
-    if (report->is_high_performance) {
-        ui_ok("Plano de Energia: " ANSI_BOLD "%s" ANSI_RESET " " ANSI_DIM "(CPU operando sem limitacao de clock)" ANSI_RESET,
-              report->power_plan_name);
-    } else {
-        ui_warn("Plano de Energia: " ANSI_BOLD "%s" ANSI_RESET, report->power_plan_name);
-        ui_line(ANSI_DIM "Por que importa: reduz o clock do processador continuamente, causando queda de FPS." ANSI_RESET);
-        ui_line(ANSI_CYAN "Como resolver  : mude para 'Alto Desempenho' nas Opcoes de Energia do Windows." ANSI_RESET);
-    }
+    ui_item_block(
+        report->is_high_performance,
+        "Plano de Energia da CPU",
+        report->power_plan_name,
+        "Define se o Windows mantem o processador na velocidade maxima ou reduz o clock para economizar bateria.",
+        report->is_high_performance
+            ? "Processador operando sem limitacao de clock."
+            : "Mude para 'Alto Desempenho' nas Opcoes de Energia do Windows quando for jogar."
+    );
 
-    /* 2. SSD TRIM */
-    if (report->ntfs_trim_enabled) {
-        ui_ok("SSD NTFS TRIM: " ANSI_BOLD "Ativado" ANSI_RESET " " ANSI_DIM "(mantem a velocidade de escrita e vida util do SSD)" ANSI_RESET);
-    } else {
-        ui_fail("SSD NTFS TRIM: " ANSI_BOLD "Desativado" ANSI_RESET);
-        ui_line(ANSI_DIM "Por que importa: sem TRIM o SSD nao limpa blocos apagados antecipadamente e fica lento." ANSI_RESET);
-        ui_line(ANSI_CYAN "Como resolver  : rode 'fsutil behavior set DisableDeleteNotify 0' como Administrador." ANSI_RESET);
-    }
+    ui_item_block(
+        report->ntfs_trim_enabled,
+        "Comando TRIM do SSD",
+        report->ntfs_trim_enabled ? "Ativado (Ideal)" : "Desativado (Critico)",
+        "Recurso que avisa o SSD quais blocos foram apagados para manter a velocidade de gravacao.",
+        report->ntfs_trim_enabled
+            ? "Seu SSD esta com a manutencao automatica de blocos ativa."
+            : "Abra o terminal como Administrador e rode: fsutil behavior set DisableDeleteNotify 0"
+    );
 
-    /* 3. Xbox GameDVR Capture */
-    if (!report->game_dvr_enabled) {
-        ui_ok("Xbox GameDVR: " ANSI_BOLD "Desativado" ANSI_RESET " " ANSI_DIM "(sem gravacao oculta consumindo GPU)" ANSI_RESET);
-    } else {
-        ui_warn("Xbox GameDVR: " ANSI_BOLD "Ativo em segundo plano" ANSI_RESET);
-        ui_line(ANSI_DIM "Por que importa: grava buffer de video na placa de video mesmo sem voce pedir, gerando micro-stutter." ANSI_RESET);
-        ui_line(ANSI_CYAN "Como resolver  : escolha a opcao '3) Aplicar otimizacoes do Windows' no menu." ANSI_RESET);
-    }
+    ui_item_block(
+        !report->game_dvr_enabled,
+        "Gravacao Xbox GameDVR",
+        report->game_dvr_enabled ? "Ativa em segundo plano (Reduz FPS)" : "Desativada (Otimizado)",
+        "Recurso do Xbox Game Bar que grava a tela continuamente na memoria da placa de video.",
+        report->game_dvr_enabled
+            ? "Abra o menu 'Otimizar Windows e Jogos' e aperte Enter para desativar."
+            : "Desativado. Sua placa de video fica 100% livre para os jogos."
+    );
 
-    /* 4. Desktop UI Menu Delay */
-    if (report->menu_show_delay_ms <= 50) {
-        ui_ok("Resposta de Menus (MenuShowDelay): " ANSI_BOLD "%d ms" ANSI_RESET " " ANSI_DIM "(resposta visual imediata)" ANSI_RESET,
-              report->menu_show_delay_ms);
-    } else {
-        ui_warn("Resposta de Menus (MenuShowDelay): " ANSI_BOLD "%d ms" ANSI_RESET " " ANSI_DIM "(padrao lento do Windows)" ANSI_RESET,
-                report->menu_show_delay_ms);
-        ui_line(ANSI_DIM "Por que importa: o Windows espera 400ms antes de desenhar menus ao passar o mouse." ANSI_RESET);
-        ui_line(ANSI_CYAN "Como resolver  : escolha a opcao '3) Aplicar otimizacoes do Windows' para baixar para 20ms." ANSI_RESET);
-    }
+    char delay_val[64];
+    snprintf(delay_val, sizeof(delay_val), "%d ms (%s)",
+             report->menu_show_delay_ms,
+             report->menu_show_delay_ms <= 50 ? "Instantaneo" : "Padrao lento do Windows");
 
-    /* 5. Boot Startup Load */
-    if (report->startup_count <= 6) {
-        ui_ok("Inicializacao (Boot): " ANSI_BOLD "%d programas" ANSI_RESET " " ANSI_DIM "(inicializacao enxuta)" ANSI_RESET,
-              report->startup_count);
-    } else {
-        ui_warn("Inicializacao (Boot): " ANSI_BOLD "%d programas iniciando sozinhos com o Windows" ANSI_RESET,
-                report->startup_count);
-        ui_line(ANSI_DIM "Por que importa: cada app na chave Run disputa leitura de disco e consome RAM desde o login." ANSI_RESET);
-        ui_line(ANSI_CYAN "Como resolver  : escolha a opcao '4) Programas na inicializacao' para ver quais sao." ANSI_RESET);
-    }
+    ui_item_block(
+        report->menu_show_delay_ms <= 50,
+        "Velocidade dos Menus",
+        delay_val,
+        "Tempo que o Windows espera antes de desenhar um menu quando voce clica ou passa o mouse.",
+        report->menu_show_delay_ms <= 50
+            ? "Menus configurados para resposta imediata."
+            : "Abra o menu 'Otimizar Windows e Jogos' e aperte Enter para baixar de 400ms para 20ms."
+    );
+
+    char boot_val[64];
+    snprintf(boot_val, sizeof(boot_val), "%d programas abrindo sozinhos", report->startup_count);
+
+    ui_item_block(
+        report->startup_count <= 6,
+        "Programas no Boot",
+        boot_val,
+        "Aplicativos que iniciam automaticamente junto com o Windows e ficam consumindo memoria RAM.",
+        report->startup_count <= 6
+            ? "Quantidade enxuta de programas iniciando no boot."
+            : "Abra 'Programas na Inicializacao (Boot)' no menu para ver a lista completa dos 18 apps."
+    );
 }
 
 void tweaks_print_startup(const tweaks_report_t *report) {
+    ui_header_box("PROGRAMAS QUE INICIAM SOZINHOS COM O SEU WINDOWS",
+                  "Quanto mais programas abaixo, mais demorado fica ligar o PC e mais memoria RAM e gasta.");
+
     if (report->startup_count == 0) {
         ui_ok("Nenhum programa configurado para iniciar junto com o Windows.");
         return;
     }
 
-    ui_info("Estes %d programas estao registrados em HKCU\\Run e HKLM\\Run e abrem sozinhos ao ligar o PC:\n",
-            report->startup_count);
-
     for (int i = 0; i < report->startup_count; i++) {
         const startup_entry_t *e = &report->startup_apps[i];
-        printf("   " ANSI_BOLD "%2d)" ANSI_RESET " %-26.25s " ANSI_DIM "[%s]" ANSI_RESET "\n",
-               i + 1, e->name, e->source);
-        ui_line("   " ANSI_DIM "%s" ANSI_RESET, e->command);
+        const char *origem_explicada = (strncmp(e->source, "HKLM", 4) == 0)
+            ? "Sistema (Todos os usuarios)"
+            : "Seu Usuario Atual";
+
+        printf("  " ANSI_YELLOW "%2d." ANSI_RESET " " ANSI_BOLD "%-28s" ANSI_RESET
+               " " ANSI_DIM "[%s]" ANSI_RESET "\n",
+               i + 1, e->name, origem_explicada);
+        printf("      " ANSI_DIM "╰─ Executavel: %s" ANSI_RESET "\n\n", e->command);
     }
 
-    printf("\n");
-    ui_info("Dica: desative os que voce nao usa todo dia na aba 'Inicializar' do Gerenciador de Tarefas (Ctrl+Shift+Esc).");
+    ui_info("Como desativar algum deles: aperte Ctrl + Shift + Esc (Gerenciador de Tarefas) -> aba 'Aplicativos de Inicializacao'.");
 }
 
 int tweaks_apply_safe_optimizations(bool dry_run) {
     int applied = 0;
 
     if (dry_run) {
-        ui_info("Otimizacoes que serao aplicadas no Registro do seu usuario (HKEY_CURRENT_USER):\n");
-        ui_warn(ANSI_BOLD "1. MenuShowDelay: 400ms -> 20ms" ANSI_RESET);
-        ui_line(ANSI_DIM "Chave : HKCU\\Control Panel\\Desktop\\MenuShowDelay" ANSI_RESET);
-        ui_line(ANSI_DIM "Efeito: menus e janelas do Windows abrem instantaneamente sem atraso artificial." ANSI_RESET);
+        tweaks_report_t current;
+        tweaks_run_audit(&current);
 
-        ui_warn(ANSI_BOLD "2. Xbox GameDVR: Ativo (1) -> Desativado (0)" ANSI_RESET);
-        ui_line(ANSI_DIM "Chave : HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR\\AppCaptureEnabled" ANSI_RESET);
-        ui_line(ANSI_DIM "Efeito: desliga a gravacao oculta de video em segundo plano na placa de video." ANSI_RESET);
+        ui_header_box("AJUSTES DE DESEMPENHO DISPONIVEIS PARA O SEU WINDOWS",
+                      "Estes ajustes alteram apenas configuracoes visuais e de jogos do seu usuario (100% seguro).");
+
+        char menu_curr[64];
+        snprintf(menu_curr, sizeof(menu_curr), "Atual: %d ms  -->  Vai ficar: 20 ms (Instantaneo)", current.menu_show_delay_ms);
+        ui_item_block(
+            current.menu_show_delay_ms <= 50,
+            "1. Velocidade dos Menus",
+            menu_curr,
+            "Chave: HKEY_CURRENT_USER\\Control Panel\\Desktop\\MenuShowDelay",
+            "Tira o atraso de quase meio segundo ao abrir menus do botao direito e do Explorer."
+        );
+
+        ui_item_block(
+            !current.game_dvr_enabled,
+            "2. Gravacao Xbox GameDVR",
+            current.game_dvr_enabled ? "Atual: Ativo (1)  -->  Vai ficar: Desativado (0)" : "Atual: Ja esta Desativado (0)",
+            "Chave: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+            "Desliga a gravacao oculta de tela na GPU para evitar quedas de FPS e input lag em jogos."
+        );
+
         return 2;
     }
 
     if (reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", "20")) {
-        ui_ok("MenuShowDelay ajustado para " ANSI_BOLD "20ms" ANSI_RESET " (HKCU\\Control Panel\\Desktop)");
+        ui_ok("Velocidade dos Menus ajustada para " ANSI_BOLD "20 ms" ANSI_RESET " (Instantaneo)");
         applied++;
     } else {
         ui_fail("Nao foi possivel gravar MenuShowDelay");
@@ -295,7 +323,7 @@ int tweaks_apply_safe_optimizations(bool dry_run) {
                                "System\\GameConfigStore",
                                "GameDVR_Enabled", 0);
     if (ok1 || ok2) {
-        ui_ok("Captura em segundo plano do " ANSI_BOLD "Xbox GameDVR desativada" ANSI_RESET);
+        ui_ok("Gravacao em segundo plano do " ANSI_BOLD "Xbox GameDVR desativada" ANSI_RESET);
         applied++;
     } else {
         ui_fail("Nao foi possivel atualizar as chaves do GameDVR");

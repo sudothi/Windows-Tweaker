@@ -5,10 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <windows.h>
 
-#define WT_VERSION "1.2.0"
+#define WT_VERSION "1.3.0"
 
 typedef struct {
     int  points_lost;
@@ -28,7 +27,7 @@ static int evaluate_health_score(
     if (!tw->is_high_performance) {
         penalties[count].points_lost = 8;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Plano de energia em '%s' (reduz clock da CPU)", tw->power_plan_name);
+                 "Plano de energia em '%s' (reduz a velocidade do processador)", tw->power_plan_name);
         score -= 8;
         count++;
     }
@@ -36,7 +35,7 @@ static int evaluate_health_score(
     if (tw->game_dvr_enabled) {
         penalties[count].points_lost = 8;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Xbox GameDVR ativo em segundo plano (consome GPU e reduz FPS)");
+                 "Xbox GameDVR ativo em segundo plano (gasta placa de video e reduz FPS)");
         score -= 8;
         count++;
     }
@@ -44,7 +43,7 @@ static int evaluate_health_score(
     if (tw->menu_show_delay_ms > 100) {
         penalties[count].points_lost = 6;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Atraso de abertura de menus em %d ms (padrao lento do Windows)", tw->menu_show_delay_ms);
+                 "Velocidade dos menus em %d ms (atraso padrao lento do Windows)", tw->menu_show_delay_ms);
         score -= 6;
         count++;
     }
@@ -52,7 +51,7 @@ static int evaluate_health_score(
     if (tw->startup_count > 6) {
         penalties[count].points_lost = 8;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "%d programas iniciando sozinhos no boot (consome RAM e atrasa login)", tw->startup_count);
+                 "%d programas abrindo sozinhos ao ligar o PC (gasta RAM e atrasa o boot)", tw->startup_count);
         score -= 8;
         count++;
     }
@@ -60,7 +59,7 @@ static int evaluate_health_score(
     if (!tw->ntfs_trim_enabled) {
         penalties[count].points_lost = 12;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Comando TRIM do SSD desativado (degrada escrita e vida util)");
+                 "Comando TRIM do SSD desativado (deixa o SSD lento com o tempo)");
         score -= 12;
         count++;
     }
@@ -70,7 +69,7 @@ static int evaluate_health_score(
         ui_format_bytes(st->total_cache_bytes, sz, sizeof(sz));
         penalties[count].points_lost = 7;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "%s acumulados em pastas de cache temporario", sz);
+                 "%s acumulados em lixo e pastas de cache temporario", sz);
         score -= 7;
         count++;
     } else if (st->total_cache_bytes > 200ULL * 1024 * 1024) {
@@ -94,7 +93,7 @@ static int evaluate_health_score(
     if (!hw->secure_boot_enabled) {
         penalties[count].points_lost = 5;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "UEFI Secure Boot inativo na BIOS");
+                 "UEFI Secure Boot desativado na BIOS");
         score -= 5;
         count++;
     }
@@ -102,7 +101,7 @@ static int evaluate_health_score(
     if (hw->ram_load_pct > 85) {
         penalties[count].points_lost = 6;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Memoria RAM acima de 85%% de uso (%u%% ocupada agora)", hw->ram_load_pct);
+                 "Memoria RAM muito cheia (%u%% em uso agora)", hw->ram_load_pct);
         score -= 6;
         count++;
     }
@@ -136,14 +135,20 @@ static void render_summary_box(
     int n = 0;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Nota do sistema   %s" ANSI_BOLD "%d / 100" ANSI_RESET "  " ANSI_DIM "(%s)" ANSI_RESET,
+             "Nota do seu PC           %s" ANSI_BOLD "%d / 100" ANSI_RESET "  " ANSI_DIM "(%s)" ANSI_RESET,
              score_col, score, status_label);
     box_lines[n] = line_storage_buf[n];
     n++;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Caches limpaveis  " ANSI_BOLD "%s" ANSI_RESET "  ·  Arquivos grandes sem uso: " ANSI_BOLD "%s" ANSI_RESET,
-             cache_str, cold_str);
+             "Lixo temporario (Cache)  " ANSI_BOLD "%s" ANSI_RESET " prontos para limpar agora",
+             cache_str);
+    box_lines[n] = line_storage_buf[n];
+    n++;
+
+    snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
+             "Arquivos grandes (+50MB) " ANSI_BOLD "%s" ANSI_RESET " sem uso ha mais de 30 dias (%d arquivos)",
+             cold_str, st->cold_file_count);
     box_lines[n] = line_storage_buf[n];
     n++;
 
@@ -153,63 +158,101 @@ static void render_summary_box(
         n++;
 
         snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-                 ANSI_BOLD "Por que sua nota foi %d/100:" ANSI_RESET, score);
+                 ANSI_BOLD "Por que sua nota foi %d/100 (motivo de cada ponto perdido):" ANSI_RESET, score);
         box_lines[n] = line_storage_buf[n];
         n++;
 
-        for (int i = 0; i < penalty_count && n < 22; i++) {
+        for (int i = 0; i < penalty_count && n < 23; i++) {
             snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-                     "  " ANSI_RED "-%d pts" ANSI_RESET "  %s",
+                     "  " ANSI_RED "-%2d pts" ANSI_RESET "  %s",
                      penalties[i].points_lost, penalties[i].reason);
             box_lines[n] = line_storage_buf[n];
             n++;
         }
     }
 
-    snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]), "%s", "");
-    box_lines[n] = line_storage_buf[n];
-    n++;
-
-    snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Comandos:  " ANSI_DIM "windows-tweaker limpar · otimizar · startup · hardware" ANSI_RESET);
-    box_lines[n] = line_storage_buf[n];
-    n++;
-
-    ui_box(box_lines, n, "Resumo do seu PC");
+    ui_box(box_lines, n, "Resumo do Diagnostico");
 }
 
-/* Fluxo interativo de inspecao e exclusao real de caches e arquivos grandes */
+/* Tela de Limpeza e Exclusao controlada 100% por Setas (CIMA/BAIXO) e ENTER */
 static void interactive_file_removal_screen(storage_report_t *st, bool already_scanned) {
     if (!already_scanned) {
-        ui_step(1, 1, "Analisando disco, caches temporarios e arquivos grandes");
+        ui_clear();
+        ui_banner();
+        ui_step(1, 1, "Procurando lixo temporario e arquivos grandes esquecidos no disco");
         storage_run_audit(st, 50, 30, NULL);
     }
 
     for (;;) {
+        ui_clear();
+        ui_banner();
         storage_print_removal_preview(st);
 
-        printf("  " ANSI_BOLD "O que voce quer excluir?" ANSI_RESET "\n");
-        printf("   " ANSI_CYAN "c" ANSI_RESET "        limpa todas as pastas de cache temporario (%%TEMP%%, Win\\Temp, CrashDumps, DirectX)\n");
-        if (st->cold_file_count > 0) {
-            printf("   " ANSI_CYAN "1..%d" ANSI_RESET "     exclui o(s) arquivo(s) grande(s) da pasta de origem (ex.: " ANSI_BOLD "1" ANSI_RESET " ou " ANSI_BOLD "1,3" ANSI_RESET ")\n",
-                   st->cold_file_count);
-            printf("   " ANSI_CYAN "t" ANSI_RESET "        limpa todos os caches + exclui todos os arquivos grandes listados\n");
+        /* Monta a lista de opcoes navegavel por setas:
+         * [0]   -> Limpar todas as pastas de Cache Temporario
+         * [1..N]-> Excluir cada arquivo grande individualmente
+         * [fim] -> Voltar ao Menu Principal
+         */
+        char labels_buf[MAX_COLD_FILES + 3][220];
+        char descs_buf[MAX_COLD_FILES + 3][256];
+        const char *labels[MAX_COLD_FILES + 3];
+        const char *descs[MAX_COLD_FILES + 3];
+        int total_opts = 0;
+
+        char cache_sz[32];
+        ui_format_bytes(st->safe_cleanable_bytes, cache_sz, sizeof(cache_sz));
+
+        snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                 "[LIMPAR CACHES] Apagar todo o lixo temporario das pastas acima (%s)", cache_sz);
+        snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
+                 "Apaga arquivos temporarios em %%TEMP%%, Win\\Temp, CrashDumps e DirectX (nao apaga documentos pessoais).");
+        labels[total_opts] = labels_buf[total_opts];
+        descs[total_opts]  = descs_buf[total_opts];
+        total_opts++;
+
+        for (int i = 0; i < st->cold_file_count; i++) {
+            const cold_file_t *cf = &st->cold_files[i];
+            char fsz[32];
+            ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
+
+            if (cf->deleted) {
+                snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                         "[JA EXCLUIDO]   %s (%s)", cf->path, fsz);
+                snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
+                         "Este arquivo ja foi excluido permanentemente da pasta de origem.");
+            } else {
+                snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                         "[EXCLUIR ARQUIVO] %-10s (%3d dias sem abrir) -> %s",
+                         fsz, cf->days_unused, cf->path);
+                snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
+                         "Exclui permanentemente este arquivo de %s direto da pasta %s.", fsz, cf->path);
+            }
+            labels[total_opts] = labels_buf[total_opts];
+            descs[total_opts]  = descs_buf[total_opts];
+            total_opts++;
         }
-        printf("   " ANSI_DIM "Enter" ANSI_RESET "    voltar ao menu\n\n");
 
-        char choice[128] = {0};
-        ui_ask("Escolha:", "", choice, sizeof(choice));
+        snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                 "Voltar ao Menu Principal");
+        snprintf(descs_buf[total_opts], sizeof(descs_buf[total_opts]),
+                 "Sai da tela de limpeza e volta para a tela inicial do Windows Tweaker.");
+        labels[total_opts] = labels_buf[total_opts];
+        descs[total_opts]  = descs_buf[total_opts];
+        int back_idx = total_opts;
+        total_opts++;
 
-        if (choice[0] == '\0' || strcmp(choice, "0") == 0 || _stricmp(choice, "voltar") == 0) {
+        int sel = ui_select("ESCOLHA COM AS SETAS O QUE VOCE QUER APAGAR", labels, descs, total_opts);
+
+        if (sel == back_idx) {
             break;
         }
 
-        if (_stricmp(choice, "c") == 0 || _stricmp(choice, "caches") == 0) {
-            char clean_sz[32];
-            ui_format_bytes(st->safe_cleanable_bytes, clean_sz, sizeof(clean_sz));
-            char q[160];
-            snprintf(q, sizeof(q), "Limpar todas as pastas de cache temporario (%s)?", clean_sz);
-            if (ui_confirm(q, true)) {
+        if (sel == 0) {
+            char detail[200];
+            snprintf(detail, sizeof(detail),
+                     "Vai apagar os arquivos temporarios desbloqueados de %%TEMP%%, Win\\Temp, CrashDumps e DirectX (%s).",
+                     cache_sz);
+            if (ui_confirm_arrows("Tem certeza que deseja limpar todas as pastas de cache temporario?", detail)) {
                 printf("\n");
                 uint64_t freed = 0;
                 uint32_t files = 0, locked = 0;
@@ -220,187 +263,186 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
                 printf("\n");
                 ui_ok(ANSI_BOLD "Limpeza concluida:" ANSI_RESET " %u arquivos removidos (%s liberados no disco)", files, freed_s);
                 if (locked > 0) {
-                    ui_info("%u arquivos temporarios foram mantidos porque estao em uso por programas abertos agora.", locked);
+                    ui_info("%u arquivos temporarios foram ignorados porque estao abertos/em uso pelo Windows agora.", locked);
                 }
-                /* Re-scan caches to update sizes on screen */
+                ui_pause_enter("Continuar");
                 storage_run_audit(st, 50, 30, NULL);
             }
-            continue;
-        }
-
-        if (_stricmp(choice, "t") == 0 || _stricmp(choice, "tudo") == 0) {
-            if (ui_confirm("ATENCAO: Limpar todos os caches E excluir permanentemente todos os arquivos grandes listados?", false)) {
-                printf("\n");
-                uint64_t freed = 0;
-                uint32_t files = 0, locked = 0;
-                storage_clean_caches(st, false, &freed, &files, &locked);
-
-                for (int i = 0; i < st->cold_file_count; i++) {
-                    if (st->cold_files[i].deleted) continue;
-                    uint64_t f_bytes = 0;
-                    char err[128];
-                    if (storage_delete_single_file(st->cold_files[i].path, &f_bytes, err, sizeof(err))) {
-                        char fsz[32];
-                        ui_format_bytes(f_bytes, fsz, sizeof(fsz));
-                        ui_ok("Excluido da pasta de origem: %s (%s)", st->cold_files[i].path, fsz);
-                        st->cold_files[i].deleted = true;
-                        freed += f_bytes;
-                        files++;
-                    } else {
-                        ui_fail("Nao foi possivel excluir %s: %s", st->cold_files[i].path, err);
-                    }
-                }
-
-                char freed_s[32];
-                ui_format_bytes(freed, freed_s, sizeof(freed_s));
-                printf("\n");
-                ui_ok(ANSI_BOLD "Total liberado:" ANSI_RESET " %s (%u arquivos removidos)", freed_s, files);
-            }
-            continue;
-        }
-
-        /* Parse comma or space separated file numbers (e.g. "1" or "1, 3" or "2 4") */
-        bool any_parsed = false;
-        const char *p = choice;
-        while (*p) {
-            while (*p && (isspace((unsigned char)*p) || *p == ',' || *p == ';')) p++;
-            if (!*p) break;
-
-            if (isdigit((unsigned char)*p)) {
-                int idx = (int)strtol(p, (char **)&p, 10) - 1;
-                any_parsed = true;
-
-                if (idx < 0 || idx >= st->cold_file_count) {
-                    ui_warn("Numero %d invalido (escolha entre 1 e %d).", idx + 1, st->cold_file_count);
-                    continue;
-                }
-
-                cold_file_t *cf = &st->cold_files[idx];
+        } else {
+            int file_idx = sel - 1;
+            if (file_idx >= 0 && file_idx < st->cold_file_count) {
+                cold_file_t *cf = &st->cold_files[file_idx];
                 if (cf->deleted) {
-                    ui_info("O arquivo #%d ja foi excluido.", idx + 1);
+                    ui_info("Este arquivo ja foi excluido do seu disco.");
+                    ui_pause_enter("Continuar");
                     continue;
                 }
 
                 char fsz[32];
                 ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
-                char q[380];
-                snprintf(q, sizeof(q), "Excluir permanentemente '%s' (%s)?", cf->path, fsz);
-                if (ui_confirm(q, false)) {
+                char q[320];
+                char detail[360];
+                snprintf(q, sizeof(q), "Excluir permanentemente o arquivo '%s'?", cf->path);
+                snprintf(detail, sizeof(detail),
+                         "O arquivo sera apagado definitivamente da pasta de origem e voce vai liberar %s no disco.", fsz);
+
+                if (ui_confirm_arrows(q, detail)) {
                     uint64_t freed_b = 0;
                     char err[128];
+                    printf("\n");
                     if (storage_delete_single_file(cf->path, &freed_b, err, sizeof(err))) {
-                        ui_ok("Arquivo excluido da pasta de origem: " ANSI_BOLD "%s" ANSI_RESET " (%s liberados)",
+                        ui_ok("Arquivo excluido com sucesso da pasta de origem: " ANSI_BOLD "%s" ANSI_RESET " (%s liberados)",
                               cf->path, fsz);
                         cf->deleted = true;
+                        if (st->total_cold_bytes >= freed_b) {
+                            st->total_cold_bytes -= freed_b;
+                        }
                     } else {
-                        ui_fail("Falha ao excluir '%s': %s", cf->path, err);
+                        ui_fail("Nao foi possivel excluir '%s': %s", cf->path, err);
                     }
-                } else {
-                    ui_info("Arquivo #%d mantido.", idx + 1);
+                    ui_pause_enter("Continuar");
                 }
-            } else {
-                ui_warn("Opcao desconhecida: '%s'. Digite 'c', o numero do arquivo (ex.: 1) ou Enter.", choice);
-                break;
             }
         }
-        (void)any_parsed;
+    }
+}
+
+/* Tela de Otimizacao do Windows controlada 100% por Setas e ENTER */
+static void interactive_optimize_screen(void) {
+    ui_clear();
+    ui_banner();
+    tweaks_apply_safe_optimizations(true);
+
+    const char *opt_labels[] = {
+        "Aplicar as 2 otimizacoes recomendadas agora (Menus 20ms + Desligar GameDVR)",
+        "Voltar ao Menu Principal sem alterar nada"
+    };
+    const char *opt_descs[] = {
+        "Grava MenuShowDelay=20 e AppCaptureEnabled=0 no Registro do seu usuario (HKEY_CURRENT_USER).",
+        "Mantem as configuracoes atuais do Windows e volta para o inicio."
+    };
+
+    int sel = ui_select("ESCOLHA COM AS SETAS O QUE DESEJA FAZER", opt_labels, opt_descs, 2);
+    if (sel == 0) {
+        printf("\n");
+        tweaks_apply_safe_optimizations(false);
+        ui_pause_enter("Voltar ao Menu Principal");
     }
 }
 
 static void print_help(void) {
-    printf(ANSI_BOLD "Uso:" ANSI_RESET " windows-tweaker <comando> [opcoes]\n\n");
-    printf(ANSI_BOLD "Comandos" ANSI_RESET "\n");
-    printf("  scan                diagnostico completo (Hardware, Disco, Windows e Nota explicada)\n");
-    printf("  limpar              mostra os caches e arquivos grandes e permite excluir de verdade\n");
-    printf("  otimizar            mostra e aplica ajustes de desempenho no Registro (MenuShowDelay, GameDVR)\n");
-    printf("  startup             lista todos os programas que iniciam sozinhos com o Windows\n");
-    printf("  hardware            mostra processador (__cpuid), memoria RAM, placa-mae e BIOS\n\n");
-    printf(ANSI_BOLD "Opcoes" ANSI_RESET "\n");
-    printf("  --dry-run           apenas simula e mostra o que seria feito sem apagar nem alterar nada\n");
-    printf("  --apply, --yes      executa a limpeza de caches ou aplica as otimizacoes direto\n");
-    printf("  --min-mb 50         tamanho minimo em MB para listar arquivos grandes sem uso (padrao: 50)\n");
-    printf("  --days 30           dias sem uso para listar arquivos grandes esquecidos (padrao: 30)\n");
+    printf(ANSI_BOLD "Uso:" ANSI_RESET " windows-tweaker [comando] [opcoes]\n\n");
+    printf(ANSI_BOLD "Como usar" ANSI_RESET "\n");
+    printf("  windows-tweaker             abre o menu interativo controlado pelas setas (↑/↓) e Enter\n");
+    printf("  windows-tweaker scan        executa o diagnostico completo de uma vez\n");
+    printf("  windows-tweaker limpar      abre a tela de limpeza de caches e exclusao de arquivos grandes\n");
+    printf("  windows-tweaker otimizar    mostra ou aplica os ajustes do Windows e Jogos\n");
+    printf("  windows-tweaker startup     lista todos os programas que iniciam sozinhos no boot\n");
+    printf("  windows-tweaker hardware    mostra processador, memoria RAM, placa-mae e BIOS\n\n");
+    printf(ANSI_BOLD "Opcoes para uso via script" ANSI_RESET "\n");
+    printf("  --dry-run                   apenas simula sem apagar nem alterar nada\n");
+    printf("  --apply, --yes              executa a limpeza de caches ou aplica as otimizacoes direto\n");
+    printf("  --min-mb 50                 tamanho minimo em MB para listar arquivos grandes (padrao: 50)\n");
+    printf("  --days 30                   dias sem uso para listar arquivos grandes esquecidos (padrao: 30)\n");
 }
 
-static int dispatch_command(int argc, char *argv[]);
-
-/* Menu interativo identico ao interactive() de apps/cli/bin/turtle-setup.mjs */
+/* Menu Principal 100% controlado pelas setas (CIMA/BAIXO) e ENTER */
 static int interactive_menu(void) {
+    static const char *MAIN_LABELS[] = {
+        "1. Diagnostico Completo do PC (Nota de 0 a 100 explicada)",
+        "2. Limpar Caches Temporarios e Excluir Arquivos Pesados",
+        "3. Otimizar Windows e Jogos (Menus Instantaneos e FPS)",
+        "4. Programas na Inicializacao (Ver o que deixa o Boot lento)",
+        "5. Hardware, Memoria RAM e BIOS (CPU, Virtualizacao e Secure Boot)",
+        "0. Sair do Windows Tweaker"
+    };
+    static const char *MAIN_DESCS[] = {
+        "Analisa Hardware, Disco e Windows e explica exatamente o motivo de cada ponto perdido na nota.",
+        "Mostra as pastas de lixo temporario e cada arquivo grande (>50MB) para voce escolher o que apagar com Enter.",
+        "Mostra o que esta lento no Registro do Windows (MenuShowDelay 400ms e Xbox GameDVR) e aplica a correcao.",
+        "Lista todos os programas configurados para abrir sozinhos assim que voce liga o computador.",
+        "Mostra o modelo exato do seu processador (__cpuid), quanto de RAM esta em uso e configuracoes da BIOS.",
+        "Fecha o programa e volta para o terminal."
+    };
+
     for (;;) {
+        ui_clear();
         ui_banner();
-        printf("  " ANSI_BOLD "O que voce quer fazer?" ANSI_RESET "\n\n");
-        printf("   1) Diagnostico completo do PC (Score explicado)\n");
-        printf("   2) Ver e excluir arquivos pesados / caches temporarios\n");
-        printf("   3) Aplicar otimizacoes do Windows e Jogos\n");
-        printf("   4) Ver programas que iniciam com o Windows (Boot)\n");
-        printf("   5) Ver Hardware, Memoria RAM e BIOS\n");
-        printf("   6) Ajuda\n");
-        printf("   0) Sair\n\n");
 
-        char ans[32] = {0};
-        ui_ask("Numero:", "", ans, sizeof(ans));
+        int choice = ui_select("MENU PRINCIPAL - O QUE VOCE QUER FAZER?", MAIN_LABELS, MAIN_DESCS, 6);
 
-        if (ans[0] == '\0' || strcmp(ans, "0") == 0) {
+        if (choice == 5) {
+            printf("\n  " ANSI_GREEN "✓" ANSI_RESET " Ate mais!\n\n");
             return 0;
         }
 
-        int choice = atoi(ans);
-        if (choice == 1) {
+        if (choice == 0) {
+            ui_clear();
+            ui_banner();
+
             hardware_report_t hw;
             storage_report_t  st;
             tweaks_report_t   tw;
 
-            ui_step(1, 3, "Hardware, Memoria e BIOS");
+            ui_step(1, 3, "HARDWARE, MEMORIA RAM E BIOS");
             hardware_run_audit(&hw);
             hardware_print_report(&hw);
 
-            ui_step(2, 3, "Disco, Caches e Arquivos Esquecidos");
+            ui_step(2, 3, "DISCO, CACHES TEMPORARIOS E ARQUIVOS ESQUECIDOS");
             storage_run_audit(&st, 50, 30, NULL);
             storage_print_report(&st);
 
-            ui_step(3, 3, "Configuracoes do Windows e Jogos");
+            ui_step(3, 3, "CONFIGURACOES DO WINDOWS E JOGOS");
             tweaks_run_audit(&tw);
             tweaks_print_report(&tw);
 
             render_summary_box(&hw, &st, &tw);
 
-            printf("\n");
-            if (ui_confirm("Quer abrir a lista de arquivos para escolher o que excluir agora?", true)) {
+            const char *post_labels[] = {
+                "Abrir Limpeza de Caches e Arquivos Pesados agora",
+                "Abrir Otimizacao do Windows e Jogos agora",
+                "Ver Lista dos Programas que Iniciam no Boot",
+                "Voltar ao Menu Principal"
+            };
+            const char *post_descs[] = {
+                "Permite escolher com as setas quais caches ou arquivos grandes voce quer apagar.",
+                "Permite aplicar o ajuste de Menus 20ms e desligar a captura oculta do Xbox GameDVR.",
+                "Mostra os programas em HKCU\\Run e HKLM\\Run que estao abrindo sozinhos com o Windows.",
+                "Volta para a tela inicial do Windows Tweaker."
+            };
+
+            int next_act = ui_select("PROXIMO PASSO RECOMENDADO", post_labels, post_descs, 4);
+            if (next_act == 0) {
                 interactive_file_removal_screen(&st, true);
+            } else if (next_act == 1) {
+                interactive_optimize_screen();
+            } else if (next_act == 2) {
+                ui_clear();
+                ui_banner();
+                tweaks_print_startup(&tw);
+                ui_pause_enter("Voltar ao Menu Principal");
             }
-            ui_pause();
-        } else if (choice == 2) {
+        } else if (choice == 1) {
             storage_report_t st;
             interactive_file_removal_screen(&st, false);
-            ui_pause();
+        } else if (choice == 2) {
+            interactive_optimize_screen();
         } else if (choice == 3) {
-            ui_step(1, 1, "Otimizacoes do Windows e Jogos (HKEY_CURRENT_USER)");
-            tweaks_apply_safe_optimizations(true);
-            printf("\n");
-            if (ui_confirm("Aplicar essas 2 otimizacoes no Registro do seu Windows agora?", true)) {
-                printf("\n");
-                tweaks_apply_safe_optimizations(false);
-            }
-            ui_pause();
-        } else if (choice == 4) {
+            ui_clear();
+            ui_banner();
             tweaks_report_t tw;
-            ui_step(1, 1, "Programas na Inicializacao do Windows (Boot)");
             tweaks_run_audit(&tw);
             tweaks_print_startup(&tw);
-            ui_pause();
-        } else if (choice == 5) {
+            ui_pause_enter("Voltar ao Menu Principal");
+        } else if (choice == 4) {
+            ui_clear();
+            ui_banner();
             hardware_report_t hw;
-            ui_step(1, 1, "Hardware, Memoria RAM e BIOS");
+            ui_header_box("TELEMETRIA DE HARDWARE, MEMORIA RAM E BIOS",
+                          "Informacoes lidas diretamente do processador (__cpuid) e da placa-mae.");
             hardware_run_audit(&hw);
             hardware_print_report(&hw);
-            ui_pause();
-        } else if (choice == 6) {
-            printf("\n");
-            print_help();
-            ui_pause();
-        } else {
-            printf("  " ANSI_RED "Opcao invalida." ANSI_RESET "\n");
-            ui_pause();
+            ui_pause_enter("Voltar ao Menu Principal");
         }
     }
 }
@@ -446,15 +488,15 @@ static int dispatch_command(int argc, char *argv[]) {
         storage_report_t  st;
         tweaks_report_t   tw;
 
-        ui_step(1, 3, "Hardware, Memoria e BIOS");
+        ui_step(1, 3, "HARDWARE, MEMORIA RAM E BIOS");
         hardware_run_audit(&hw);
         hardware_print_report(&hw);
 
-        ui_step(2, 3, "Disco, Caches e Arquivos Esquecidos");
+        ui_step(2, 3, "DISCO, CACHES TEMPORARIOS E ARQUIVOS ESQUECIDOS");
         storage_run_audit(&st, min_cold_mb, min_cold_days, custom_dir);
         storage_print_report(&st);
 
-        ui_step(3, 3, "Configuracoes do Windows e Jogos");
+        ui_step(3, 3, "CONFIGURACOES DO WINDOWS E JOGOS");
         tweaks_run_audit(&tw);
         tweaks_print_report(&tw);
 
@@ -464,7 +506,7 @@ static int dispatch_command(int argc, char *argv[]) {
 
     if (strcmp(cmd, "limpar") == 0 || strcmp(cmd, "clean") == 0 || strcmp(cmd, "inspect") == 0 || strcmp(cmd, "storage") == 0) {
         storage_report_t st;
-        ui_step(1, 1, "Disco, Caches Temporarios e Arquivos Grandes");
+        ui_step(1, 1, "DISCO, CACHES TEMPORARIOS E ARQUIVOS GRANDES");
         storage_run_audit(&st, min_cold_mb, min_cold_days, custom_dir);
 
         if (apply_mode || dry_run_flag) {
@@ -482,7 +524,6 @@ static int dispatch_command(int argc, char *argv[]) {
             return 0;
         }
 
-        /* Se estiver num terminal interativo, abre o seletor para escolher o que excluir */
         HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
         DWORD in_mode = 0;
         if (GetConsoleMode(hIn, &in_mode)) {
@@ -495,18 +536,16 @@ static int dispatch_command(int argc, char *argv[]) {
 
     if (strcmp(cmd, "otimizar") == 0 || strcmp(cmd, "optimize") == 0) {
         bool dry = !apply_mode;
-        ui_step(1, 1, dry ? "Otimizacoes do Windows (simulacao --dry-run)" : "Aplicando Otimizacoes do Windows");
         tweaks_apply_safe_optimizations(dry);
         if (dry) {
             printf("\n");
-            ui_info("(dry-run: rode 'windows-tweaker otimizar --apply' para gravar no Registro)");
+            ui_info("(dry-run: rode 'windows-tweaker otimizar --apply' ou use o menu interativo para aplicar)");
         }
         return 0;
     }
 
     if (strcmp(cmd, "startup") == 0 || strcmp(cmd, "boot") == 0) {
         tweaks_report_t tw;
-        ui_step(1, 1, "Programas na Inicializacao do Windows");
         tweaks_run_audit(&tw);
         tweaks_print_startup(&tw);
         return 0;
@@ -514,7 +553,8 @@ static int dispatch_command(int argc, char *argv[]) {
 
     if (strcmp(cmd, "hardware") == 0 || strcmp(cmd, "hw") == 0) {
         hardware_report_t hw;
-        ui_step(1, 1, "Hardware, Memoria RAM e BIOS");
+        ui_header_box("TELEMETRIA DE HARDWARE, MEMORIA RAM E BIOS",
+                      "Informacoes lidas diretamente do processador (__cpuid) e da placa-mae.");
         hardware_run_audit(&hw);
         hardware_print_report(&hw);
         return 0;
