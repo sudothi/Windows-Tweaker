@@ -3,23 +3,22 @@
 Assistente de terminal em **C11 puro** (zero dependencias externas) para diagnostico, limpeza de disco e otimizacao do Windows 10/11. Roda direto sobre as APIs nativas do sistema (`Win32 API`, Registro, `FindFirstFileA`, `GlobalMemoryStatusEx`) e instrucoes de hardware do processador (`__cpuid`).
 
 ```text
-         ▄█████▄  ▄█████▄
-        ██████████████████
-        ██████████████████
-        ▀████████████████▀
-         ▀██████████████▀
-   ▄▄▄▄▄   ████████████   ▄▄▄▄▄
- ▄████████▄████████████▄████████▄
-██████████████████████████████████
-██████████████████████████████████    Windows Tweaker
- ▀██████████████████████████████▀     o seu PC, limpo e otimizado
-   ▀██████████████████████████▀
-   ▄██████████████████████████▄       diagnostico, limpeza de disco e
-   ███████████▀████▀███████████       ajustes do Windows, direto em C
-   ▀████████▀  ███▀  ▀████████▀
-     ▀▀▀▀▀    ▄███     ▀▀▀▀▀▀
-             ████▀
-             ▀▀▀
+      ▄███▄  ▄███▄
+      ████████████
+      ████████████
+      ████████████
+      ▀██████████▀
+ ▄▄▄▄▄ ██████████ ▄▄▄▄▄
+▄██████████████████████▄
+████████████████████████     Windows Tweaker
+████████████████████████     o seu PC, limpo e otimizado
+ ▀████████████████████▀
+  ████████████████████       diagnostico, limpeza de disco e
+  ████████▀██▀████████       ajustes do Windows, direto em C
+  ███████  ██  ███████
+   ▀▀█▀▀  ███   ▀▀█▀▀
+         ▄██▀
+         ███
 ```
 
 ## Comandos

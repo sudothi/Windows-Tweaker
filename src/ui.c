@@ -14,27 +14,26 @@ static const char *FRAMES[] = {
 };
 #define FRAME_COUNT 10
 
-/* Logo 1 do Windows Tweaker rasterizada em meio-bloco (▄, ▀, █) diretamente da imagem */
+/* Logo 1 do Windows Tweaker compacta (24 colunas x 16 linhas, desachatada verticalmente) */
 static const char *BANNER_ART[] = {
-    "         ▄█████▄  ▄█████▄",
-    "        ██████████████████",
-    "        ██████████████████",
-    "        ▀████████████████▀",
-    "         ▀██████████████▀",
-    "   ▄▄▄▄▄   ████████████   ▄▄▄▄▄",
-    " ▄████████▄████████████▄████████▄",
-    "██████████████████████████████████",
-    "██████████████████████████████████",
-    " ▀██████████████████████████████▀",
-    "   ▀██████████████████████████▀",
-    "   ▄██████████████████████████▄",
-    "   ███████████▀████▀███████████",
-    "   ▀████████▀  ███▀  ▀████████▀",
-    "     ▀▀▀▀▀    ▄███     ▀▀▀▀▀▀",
-    "             ████▀",
-    "             ▀▀▀"
+    "      ▄███▄  ▄███▄",
+    "      ████████████",
+    "      ████████████",
+    "      ████████████",
+    "      ▀██████████▀",
+    " ▄▄▄▄▄ ██████████ ▄▄▄▄▄",
+    "▄██████████████████████▄",
+    "████████████████████████",
+    "████████████████████████",
+    " ▀████████████████████▀",
+    "  ████████████████████",
+    "  ████████▀██▀████████",
+    "  ███████  ██  ███████",
+    "   ▀▀█▀▀  ███   ▀▀█▀▀",
+    "         ▄██▀",
+    "         ███"
 };
-#define BANNER_ROWS 17
+#define BANNER_ROWS 16
 
 static const char *BANNER_TEXT[] = {
     "",
@@ -127,7 +126,7 @@ static int print_fire_row(const char *line, int row) {
         if (*p == ' ') {
             putchar(' ');
         } else {
-            double t = (((double)col / 34.0) + ((double)row / (double)(BANNER_ROWS - 1))) / 2.0 * 1.15;
+            double t = (((double)col / 24.0) + ((double)row / (double)(BANNER_ROWS - 1))) / 2.0 * 1.15;
             if (t > 1.0) t = 1.0;
             if (t < 0.0) t = 0.0;
 
@@ -164,7 +163,7 @@ void ui_banner(void) {
 
         int text_idx = i - off;
         if (text_idx >= 0 && text_idx < BANNER_TEXT_ROWS && BANNER_TEXT[text_idx][0] != '\0') {
-            int pad = 34 - visual_cols + 4;
+            int pad = 24 - visual_cols + 5;
             if (pad < 2) pad = 2;
             for (int s = 0; s < pad; s++) putchar(' ');
 
