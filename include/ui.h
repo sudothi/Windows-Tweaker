@@ -6,85 +6,51 @@
 #include <stdbool.h>
 
 /* ============================================================================
- * WINDOWS TWEAKER - TERMINAL UI ENGINE (TRUECOLOR RGB & INTERACTIVE TUI)
- * Zero-Emoji Pure C11 ANSI Virtual Terminal Renderer
+ * WINDOWS TWEAKER - TERMINAL UI (BASEADO EM SUDOTHI/TURTLE apps/cli/src/ui.mjs)
+ * Sem blocos de fundo azul. Apenas cores limpas, icone half-block em degrade
+ * diagonal, ◆ passos, ✓/!/✗/·/│, spinner de uma linha e box() dinamico.
  * ============================================================================ */
 
-#define ANSI_RESET       "\033[0m"
-#define ANSI_BOLD        "\033[1m"
-#define ANSI_DIM         "\033[38;5;242m"
+#define ANSI_RESET   "\x1b[0m"
+#define ANSI_BOLD    "\x1b[1m"
+#define ANSI_DIM     "\x1b[2m"
+#define ANSI_RED     "\x1b[31m"
+#define ANSI_GREEN   "\x1b[32m"
+#define ANSI_YELLOW  "\x1b[33m"
+#define ANSI_CYAN    "\x1b[36m"
+#define ANSI_MAGENTA "\x1b[35m"
 
-#define ANSI_CYAN        "\033[38;5;51m"
-#define ANSI_GREEN       "\033[38;5;48m"
-#define ANSI_AMBER       "\033[38;5;214m"
-#define ANSI_RED         "\033[38;5;196m"
-#define ANSI_MAGENTA     "\033[38;5;141m"
-#define ANSI_BLUE        "\033[38;5;39m"
-#define ANSI_WHITE       "\033[97m"
-#define ANSI_GRAY        "\033[38;5;248m"
-
-/* High-Contrast Status Pill Backgrounds (Zero Emojis) */
-#define BG_GREEN         "\033[48;5;22m\033[38;5;48m\033[1m"
-#define BG_AMBER         "\033[48;5;58m\033[38;5;214m\033[1m"
-#define BG_RED           "\033[48;5;52m\033[38;5;196m\033[1m"
-#define BG_CYAN          "\033[48;5;23m\033[38;5;51m\033[1m"
-#define BG_MAGENTA       "\033[48;5;53m\033[38;5;141m\033[1m"
-#define BG_SELECT        "\033[48;5;24m\033[97m\033[1m"
-
-/* Cursor & Screen Controls */
-#define ANSI_CLEAR_LINE  "\033[2K\r"
-#define ANSI_CLEAR_SCREEN "\033[2J\033[H"
-#define ANSI_HIDE_CURSOR "\033[?25l"
-#define ANSI_SHOW_CURSOR "\033[?25h"
-
-typedef enum {
-    UI_STATUS_OK = 0,
-    UI_STATUS_WARN,
-    UI_STATUS_CRIT,
-    UI_STATUS_INFO,
-    UI_STATUS_SCAN,
-    UI_STATUS_TWEAK
-} ui_status_t;
-
-/* Console Initialization & Restoration */
+/* Console init & restore */
 bool ui_init(void);
 void ui_cleanup(void);
-void ui_clear_screen(void);
 
-/* TrueColor RGB Gradient Text & ASCII Logo */
-void ui_print_gradient_line(const char *text, int r1, int g1, int b1, int r2, int g2, int b2);
-void ui_print_banner(const char *version);
-void ui_section_header(const char *tag, const char *title, const char *subtitle);
-void ui_divider(int width);
+/* Banner no estilo exato do Turtle (icone half-block em degrade diagonal + texto ao lado) */
+void ui_banner(void);
 
-/* Badges & Detailed Diagnostic Blocks */
-const char *ui_badge_str(ui_status_t status);
-void ui_print_status(ui_status_t status, const char *title, const char *detail);
-void ui_print_diagnostic_item(
-    ui_status_t status,
-    const char *title,
-    const char *current_state,
-    const char *why_it_matters,
-    const char *recommendation
-);
+/* Primitivas identicas ao apps/cli/src/ui.mjs do Turtle */
+void ui_step(int n, int total, const char *title);
+void ui_ok(const char *fmt, ...);
+void ui_warn(const char *fmt, ...);
+void ui_fail(const char *fmt, ...);
+void ui_info(const char *fmt, ...);
+void ui_line(const char *fmt, ...);
 
-/* Animated Spinners & Progress Bars */
-void ui_spinner_tick(int frame, const char *action, const char *target);
-void ui_spinner_finish(ui_status_t status, const char *action, const char *summary, double elapsed_ms);
-void ui_progress_bar(int current, int total, const char *label, const char *sublabel);
-void ui_usage_bar(double ratio, int bar_width, char *out_buf, size_t buf_size);
+/* Spinner de uma linha (\r  ⠋ texto\x1b[K) -> fecha com ui_ok ou ui_fail */
+void ui_spinner_update(int frame, const char *text);
+void ui_spinner_stop(const char *text, bool good);
 
-/* Box / Card Containers */
-void ui_card_begin(const char *title, int width);
-void ui_card_row(const char *label, const char *value, const char *accent_color, int width);
-void ui_card_end(int width);
+/* Caixa com borda dinamica igual ao box(lines, title) do Turtle */
+void ui_box(const char **lines, int line_count, const char *title);
 
-/* Interactive Keyboard Input Helpers */
-int  ui_menu_select(const char *prompt_title, const char **items, const char **descriptions, int item_count);
-bool ui_confirm_prompt(const char *question);
-void ui_wait_for_key(const char *prompt_msg);
+/* Barra de uso limpa sem fundo colorido */
+void ui_bar(double ratio, int width, char *out_buf, size_t buf_size);
 
-/* Utilities */
+/* Prompts de terminal identicos ao prompter() do Turtle */
+void ui_ask(const char *question, const char *def_val, char *out_buf, size_t buf_size);
+bool ui_confirm(const char *question, bool def_val);
+void ui_pause(void);
+
+/* Formatador de bytes (KB, MB, GB, TB) */
 void ui_format_bytes(uint64_t bytes, char *out_buf, size_t buf_size);
 
 #endif /* WT_UI_H */

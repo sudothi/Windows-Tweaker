@@ -1,17 +1,62 @@
 #include "ui.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <windows.h>
-#include <conio.h>
 
 static DWORD g_original_out_mode = 0;
 static UINT  g_original_cp = 0;
 static bool  g_console_initialized = false;
 
-static const char *SPINNER_FRAMES[] = {
+static const char *FRAMES[] = {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
 };
-#define SPINNER_FRAME_COUNT 10
+#define FRAME_COUNT 10
+
+/* Arte em meio-bloco (▄, ▀, █) de 35 colunas de largura visual, igual ao BANNER_ART do Turtle */
+static const char *BANNER_ART[] = {
+    "            ▄▄▄▄▄▄           ▄▄████",
+    "         ███████████▄       ▄██████",
+    "       ▄████████▀ ▄▄▄▄▄▄▄▄  ███████",
+    "            ▀▀   ██████████  ▀███▀",
+    "            ▄███ █████████▀▄▄▄",
+    "          ▄██████ █████▀ ▄█████",
+    "          ███████▄▄▄▄▄  ▄██████",
+    "          ▀▀▀▀▀████████ ███████ ▄▄",
+    "     ▄▄  ████▄ ████████ ▀██████ ██▄",
+    "  ▄█████ █████ ███████▀▄▄▄▀▀▀▀ ▄███",
+    " ▄██████ █████ ▀▀███▀▄██████▄  ████",
+    " ███▀▀▀  ████▀▄▄███▄ ███████▀ █████",
+    " ▀▀       ▀▀▄████████ ████▀    ███▀",
+    "            ▀███████▀  ▀       ██▀",
+    "               ▄▄▄▄▄          ▀▀",
+    "              ▄█████",
+    "              █████",
+    "             ███▀▀"
+};
+#define BANNER_ROWS 18
+
+static const char *BANNER_TEXT[] = {
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Windows Tweaker",
+    "o seu PC, limpo e otimizado",
+    "",
+    "diagnostico, limpeza de disco e",
+    "ajustes do Windows, direto em C"
+};
+#define BANNER_TEXT_ROWS 10
+
+/* Paleta do degrade diagonal identica ao FIRE do Turtle: vermelho -> laranja -> amarelo */
+static const int FIRE[3][3] = {
+    {226, 38,  38},
+    {249, 115, 22},
+    {250, 204, 21}
+};
 
 bool ui_init(void) {
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -35,7 +80,7 @@ bool ui_init(void) {
 }
 
 void ui_cleanup(void) {
-    printf(ANSI_SHOW_CURSOR ANSI_RESET);
+    printf(ANSI_RESET);
     fflush(stdout);
     if (g_console_initialized) {
         HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -48,206 +93,263 @@ void ui_cleanup(void) {
     }
 }
 
-void ui_clear_screen(void) {
-    printf(ANSI_CLEAR_SCREEN);
-    fflush(stdout);
-}
-
-void ui_print_gradient_line(const char *text, int r1, int g1, int b1, int r2, int g2, int b2) {
-    int len = (int)strlen(text);
-    if (len <= 0) {
-        printf("\n");
-        return;
-    }
-
-    printf(ANSI_BOLD);
-    for (int i = 0; i < len; i++) {
-        double t = (len > 1) ? ((double)i / (double)(len - 1)) : 0.0;
-        int r = (int)(r1 + t * (r2 - r1));
-        int g = (int)(g1 + t * (g2 - g1));
-        int b = (int)(b1 + t * (b2 - b1));
-        printf("\033[38;2;%d;%d;%dm%c", r, g, b, text[i]);
-    }
-    printf(ANSI_RESET "\n");
-}
-
-void ui_print_banner(const char *version) {
-    static const char *LOGO_LINES[] = {
-        "  ██╗    ██╗██╗███╗   ██╗    ████████╗██╗    ██╗███████╗ █████╗ ██╗  ██╗███████╗██████╗ ",
-        "  ██║    ██║██║████╗  ██║    ╚══██╔══╝██║    ██║██╔════╝██╔══██╗██║ ██╔╝██╔════╝██╔══██╗",
-        "  ██║ █╗ ██║██║██╔██╗ ██║       ██║   ██║ █╗ ██║█████╗  ███████║█████╔╝ █████╗  ██████╔╝",
-        "  ██║███╗██║██║██║╚██╗██║       ██║   ██║███╗██║██╔══╝  ██╔══██║██╔═██╗ ██╔══╝  ██╔══██╗",
-        "  ╚███╔███╔╝██║██║ ╚████║       ██║   ╚███╔███╔╝███████╗██║  ██║██║  ██╗███████╗██║  ██║",
-        "   ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝       ╚═╝    ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝"
-    };
-
-    /* TrueColor vertical + horizontal RGB gradient (Electric Cyan -> Neon Violet) */
-    printf("\n");
-    for (int row = 0; row < 6; row++) {
-        int r_start = 0   + (row * 22);
-        int g_start = 240 - (row * 25);
-        int b_start = 255;
-
-        int r_end   = 155 + (row * 16);
-        int g_end   = 80  - (row * 10);
-        int b_end   = 255;
-
-        ui_print_gradient_line(LOGO_LINES[row], r_start, g_start, b_start, r_end, g_end, b_end);
-    }
-
-    printf("  " ANSI_DIM "╭────────────────────────────────────────────────────────────────────────────────────╮" ANSI_RESET "\n");
-    printf("  " ANSI_DIM "│" ANSI_RESET "  " BG_CYAN " CORE ENGINE " ANSI_RESET "  " ANSI_WHITE ANSI_BOLD "Sistema de Diagnostico, Limpeza de Disco e Otimizacao Windows" ANSI_RESET "       " ANSI_DIM "│" ANSI_RESET "\n");
-    printf("  " ANSI_DIM "│" ANSI_RESET "  " ANSI_DIM "Arquitetura C11 Nativa (Win32 API + __cpuid)  |  Versao: %-8s  |  Modo Seguro" ANSI_RESET "   " ANSI_DIM "│" ANSI_RESET "\n", version);
-    printf("  " ANSI_DIM "╰────────────────────────────────────────────────────────────────────────────────────╯" ANSI_RESET "\n");
-}
-
-void ui_section_header(const char *tag, const char *title, const char *subtitle) {
-    printf("\n  " BG_CYAN " %s " ANSI_RESET " " ANSI_CYAN ANSI_BOLD "%s" ANSI_RESET, tag, title);
-    if (subtitle && subtitle[0] != '\0') {
-        printf(" " ANSI_DIM "// %s" ANSI_RESET, subtitle);
-    }
-    printf("\n  " ANSI_DIM "────────────────────────────────────────────────────────────────────────────────────" ANSI_RESET "\n");
-}
-
-void ui_divider(int width) {
-    printf("  " ANSI_DIM);
-    for (int i = 0; i < width; i++) {
-        printf("─");
-    }
-    printf(ANSI_RESET "\n");
-}
-
-const char *ui_badge_str(ui_status_t status) {
-    switch (status) {
-        case UI_STATUS_OK:    return BG_GREEN   "   OK   " ANSI_RESET;
-        case UI_STATUS_WARN:  return BG_AMBER   " ATENCAO" ANSI_RESET;
-        case UI_STATUS_CRIT:  return BG_RED     " CRITICO" ANSI_RESET;
-        case UI_STATUS_INFO:  return BG_CYAN    "  INFO  " ANSI_RESET;
-        case UI_STATUS_SCAN:  return BG_CYAN    "  SCAN  " ANSI_RESET;
-        case UI_STATUS_TWEAK: return BG_MAGENTA " AJUSTE " ANSI_RESET;
-        default:              return BG_CYAN    "  INFO  " ANSI_RESET;
-    }
-}
-
-void ui_print_status(ui_status_t status, const char *title, const char *detail) {
-    printf("  %s " ANSI_WHITE ANSI_BOLD "%-28s" ANSI_RESET, ui_badge_str(status), title);
-    if (detail && detail[0] != '\0') {
-        printf(" " ANSI_GRAY "%s" ANSI_RESET, detail);
-    }
-    printf("\n");
-}
-
-void ui_print_diagnostic_item(
-    ui_status_t status,
-    const char *title,
-    const char *current_state,
-    const char *why_it_matters,
-    const char *recommendation
-) {
-    const char *state_col = (status == UI_STATUS_OK)   ? ANSI_GREEN :
-                            (status == UI_STATUS_WARN) ? ANSI_AMBER :
-                            (status == UI_STATUS_CRIT) ? ANSI_RED   : ANSI_CYAN;
-
-    printf("  %s " ANSI_WHITE ANSI_BOLD "%-28s" ANSI_RESET " %s%s" ANSI_RESET "\n",
-           ui_badge_str(status), title, state_col, current_state);
-
-    if (why_it_matters && why_it_matters[0] != '\0') {
-        printf("           " ANSI_DIM "├─ Impacto     :" ANSI_RESET " " ANSI_GRAY "%s" ANSI_RESET "\n", why_it_matters);
-    }
-    if (recommendation && recommendation[0] != '\0') {
-        const char *rec_col = (status == UI_STATUS_OK) ? ANSI_DIM : ANSI_CYAN;
-        printf("           " ANSI_DIM "╰─ Recomendacao:" ANSI_RESET " %s%s" ANSI_RESET "\n", rec_col, recommendation);
-    }
-    printf("\n");
-}
-
-void ui_spinner_tick(int frame, const char *action, const char *target) {
-    const char *glyph = SPINNER_FRAMES[frame % SPINNER_FRAME_COUNT];
-    printf(ANSI_CLEAR_LINE ANSI_HIDE_CURSOR "  " ANSI_CYAN ANSI_BOLD "%s" ANSI_RESET " " ANSI_WHITE "%s" ANSI_RESET " " ANSI_DIM "%s" ANSI_RESET,
-           glyph, action, target ? target : "");
-    fflush(stdout);
-}
-
-void ui_spinner_finish(ui_status_t status, const char *action, const char *summary, double elapsed_ms) {
-    printf(ANSI_CLEAR_LINE ANSI_SHOW_CURSOR "  %s " ANSI_WHITE "%-28s" ANSI_RESET " " ANSI_GRAY "%s" ANSI_RESET " " ANSI_DIM "(%.1f ms)" ANSI_RESET "\n",
-           ui_badge_str(status), action, summary ? summary : "", elapsed_ms);
-    fflush(stdout);
-}
-
-void ui_progress_bar(int current, int total, const char *label, const char *sublabel) {
-    if (total <= 0) total = 1;
-    if (current > total) current = total;
-
-    int bar_width = 26;
-    double ratio = (double)current / (double)total;
-    int filled = (int)(ratio * bar_width);
-    int pct = (int)(ratio * 100.0);
-
-    printf(ANSI_CLEAR_LINE ANSI_HIDE_CURSOR "  " ANSI_CYAN ">>" ANSI_RESET " " ANSI_WHITE "%-24s" ANSI_RESET " [", label);
-    for (int i = 0; i < bar_width; i++) {
-        if (i < filled) {
-            printf(ANSI_CYAN "█" ANSI_RESET);
-        } else {
-            printf(ANSI_DIM "░" ANSI_RESET);
+/* Conta quantas colunas visuais (codepoints UTF-8) existem ignorando codigos ANSI */
+static int visible_utf8_len(const char *s) {
+    int count = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        if (*p == 0x1B && *(p + 1) == '[') {
+            p += 2;
+            while (*p && *p != 'm') p++;
+            if (*p == 'm') p++;
+            continue;
         }
+        /* Em UTF-8, bytes de continuacao tem os bits 10xxxxxx (0x80..0xBF) */
+        if ((*p & 0xC0) != 0x80) {
+            count++;
+        }
+        p++;
     }
-    printf("] " ANSI_BOLD "%3d%%" ANSI_RESET, pct);
-    if (sublabel && sublabel[0] != '\0') {
-        printf(" " ANSI_DIM "%s" ANSI_RESET, sublabel);
+    return count;
+}
+
+/* Imprime uma linha do BANNER_ART aplicando o degrade diagonal FIRE por codepoint UTF-8 */
+static int print_fire_row(const char *line, int row) {
+    const unsigned char *p = (const unsigned char *)line;
+    int col = 0;
+
+    while (*p) {
+        /* Determina quantos bytes tem este caractere UTF-8 */
+        int char_bytes = 1;
+        if ((*p & 0xE0) == 0xC0) char_bytes = 2;
+        else if ((*p & 0xF0) == 0xE0) char_bytes = 3;
+        else if ((*p & 0xF8) == 0xF0) char_bytes = 4;
+
+        if (*p == ' ') {
+            putchar(' ');
+        } else {
+            double t = (((double)col / 35.0) + ((double)row / (double)(BANNER_ROWS - 1))) / 2.0 * 1.15;
+            if (t > 1.0) t = 1.0;
+            if (t < 0.0) t = 0.0;
+
+            double k = t * 2.0; /* FIRE.length - 1 == 2 */
+            int idx = (int)k;
+            if (idx > 1) idx = 1;
+            double f = k - (double)idx;
+
+            int r  = (int)(FIRE[idx][0] + (FIRE[idx + 1][0] - FIRE[idx][0]) * f + 0.5);
+            int g  = (int)(FIRE[idx][1] + (FIRE[idx + 1][1] - FIRE[idx][1]) * f + 0.5);
+            int bl = (int)(FIRE[idx][2] + (FIRE[idx + 1][2] - FIRE[idx][2]) * f + 0.5);
+
+            printf("\x1b[38;2;%d;%d;%dm", r, g, bl);
+            for (int b = 0; b < char_bytes && p[b]; b++) {
+                putchar(p[b]);
+            }
+        }
+
+        p += char_bytes;
+        col++;
     }
-    if (current == total) {
-        printf(ANSI_SHOW_CURSOR "\n");
+    printf(ANSI_RESET);
+    return col;
+}
+
+void ui_banner(void) {
+    printf("\n");
+    int off = (BANNER_ROWS - BANNER_TEXT_ROWS) / 2;
+    if (off < 0) off = 0;
+
+    for (int i = 0; i < BANNER_ROWS; i++) {
+        printf("  ");
+        int visual_cols = print_fire_row(BANNER_ART[i], i);
+
+        int text_idx = i - off;
+        if (text_idx >= 0 && text_idx < BANNER_TEXT_ROWS && BANNER_TEXT[text_idx][0] != '\0') {
+            int pad = 35 - visual_cols + 4;
+            if (pad < 2) pad = 2;
+            for (int s = 0; s < pad; s++) putchar(' ');
+
+            if (text_idx == 5) {
+                printf(ANSI_BOLD "%s" ANSI_RESET, BANNER_TEXT[text_idx]);
+            } else {
+                printf(ANSI_DIM "%s" ANSI_RESET, BANNER_TEXT[text_idx]);
+            }
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
+
+void ui_step(int n, int total, const char *title) {
+    printf("\n" ANSI_MAGENTA "◆" ANSI_RESET " " ANSI_DIM "%d/%d" ANSI_RESET " " ANSI_BOLD "%s" ANSI_RESET "\n",
+           n, total, title);
+}
+
+void ui_ok(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    printf("  " ANSI_GREEN "✓" ANSI_RESET " ");
+    vprintf(fmt, args);
+    printf("\n");
+    va_end(args);
+}
+
+void ui_warn(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    printf("  " ANSI_YELLOW "!" ANSI_RESET " ");
+    vprintf(fmt, args);
+    printf("\n");
+    va_end(args);
+}
+
+void ui_fail(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    printf("  " ANSI_RED "✗" ANSI_RESET " ");
+    vprintf(fmt, args);
+    printf("\n");
+    va_end(args);
+}
+
+void ui_info(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    printf("  " ANSI_DIM "·" ANSI_RESET " ");
+    vprintf(fmt, args);
+    printf("\n");
+    va_end(args);
+}
+
+void ui_line(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    printf("  " ANSI_DIM "│" ANSI_RESET " ");
+    vprintf(fmt, args);
+    printf("\n");
+    va_end(args);
+}
+
+void ui_spinner_update(int frame, const char *text) {
+    printf("\r  " ANSI_CYAN "%s" ANSI_RESET " %s\x1b[K", FRAMES[frame % FRAME_COUNT], text);
+    fflush(stdout);
+}
+
+void ui_spinner_stop(const char *text, bool good) {
+    printf("\r\x1b[K");
+    if (good) {
+        ui_ok("%s", text);
+    } else {
+        ui_fail("%s", text);
     }
     fflush(stdout);
 }
 
-void ui_usage_bar(double ratio, int bar_width, char *out_buf, size_t buf_size) {
+void ui_box(const char **lines, int line_count, const char *title) {
+    int title_len = title ? visible_utf8_len(title) : 0;
+    int w = (title_len > 0) ? (title_len + 2) : 0;
+
+    for (int i = 0; i < line_count; i++) {
+        int len = visible_utf8_len(lines[i]);
+        if (len > w) w = len;
+    }
+
+    printf("\n");
+    if (title && title[0] != '\0') {
+        printf("╭─ " ANSI_BOLD "%s" ANSI_RESET " ", title);
+        int dashes = w - title_len - 1;
+        if (dashes < 0) dashes = 0;
+        for (int i = 0; i < dashes; i++) printf("─");
+        printf("╮\n");
+    } else {
+        printf("╭");
+        for (int i = 0; i < w + 2; i++) printf("─");
+        printf("╮\n");
+    }
+
+    for (int i = 0; i < line_count; i++) {
+        int len = visible_utf8_len(lines[i]);
+        int pad = w - len;
+        if (pad < 0) pad = 0;
+        printf("│ %s", lines[i]);
+        for (int s = 0; s < pad; s++) putchar(' ');
+        printf(" │\n");
+    }
+
+    printf("╰");
+    for (int i = 0; i < w + 2; i++) printf("─");
+    printf("╯\n");
+}
+
+void ui_bar(double ratio, int width, char *out_buf, size_t buf_size) {
     if (ratio < 0.0) ratio = 0.0;
     if (ratio > 1.0) ratio = 1.0;
 
-    int filled = (int)(ratio * bar_width);
-    const char *color = ANSI_GREEN;
-    if (ratio >= 0.85) {
-        color = ANSI_RED;
-    } else if (ratio >= 0.65) {
-        color = ANSI_AMBER;
-    } else {
-        color = ANSI_CYAN;
-    }
+    int filled = (int)(ratio * width + 0.5);
+    const char *col = (ratio >= 0.85) ? ANSI_RED :
+                      (ratio >= 0.65) ? ANSI_YELLOW : ANSI_GREEN;
 
     size_t pos = 0;
-    pos += (size_t)snprintf(out_buf + pos, buf_size - pos, "%s", color);
+    pos += (size_t)snprintf(out_buf + pos, buf_size - pos, "%s", col);
     for (int i = 0; i < filled && pos + 8 < buf_size; i++) {
         pos += (size_t)snprintf(out_buf + pos, buf_size - pos, "█");
     }
     pos += (size_t)snprintf(out_buf + pos, buf_size - pos, "%s", ANSI_DIM);
-    for (int i = filled; i < bar_width && pos + 8 < buf_size; i++) {
+    for (int i = filled; i < width && pos + 8 < buf_size; i++) {
         pos += (size_t)snprintf(out_buf + pos, buf_size - pos, "░");
     }
-    snprintf(out_buf + pos, buf_size - pos, ANSI_RESET);
+    snprintf(out_buf + pos, buf_size - pos, "%s", ANSI_RESET);
 }
 
-void ui_card_begin(const char *title, int width) {
-    int title_len = (int)strlen(title);
-    int dashes = width - title_len - 5;
-    if (dashes < 2) dashes = 2;
+void ui_ask(const char *question, const char *def_val, char *out_buf, size_t buf_size) {
+    if (def_val && def_val[0] != '\0') {
+        printf("  %s " ANSI_DIM "[%s]" ANSI_RESET " ", question, def_val);
+    } else {
+        printf("  %s ", question);
+    }
+    fflush(stdout);
 
-    printf("  " ANSI_DIM "╭─ " ANSI_RESET ANSI_CYAN ANSI_BOLD "%s" ANSI_RESET " " ANSI_DIM, title);
-    for (int i = 0; i < dashes; i++) printf("─");
-    printf("╮" ANSI_RESET "\n");
+    if (!fgets(out_buf, (int)buf_size, stdin)) {
+        printf(ANSI_DIM "\n  Cancelado.\n" ANSI_RESET);
+        out_buf[0] = '\0';
+        return;
+    }
+
+    /* Remove \r e \n do final */
+    size_t len = strlen(out_buf);
+    while (len > 0 && (out_buf[len - 1] == '\n' || out_buf[len - 1] == '\r' || out_buf[len - 1] == ' ')) {
+        out_buf[--len] = '\0';
+    }
+
+    if (out_buf[0] == '\0' && def_val) {
+        strncpy(out_buf, def_val, buf_size - 1);
+        out_buf[buf_size - 1] = '\0';
+    }
 }
 
-void ui_card_row(const char *label, const char *value, const char *accent_color, int width) {
-    (void)width;
-    const char *col = (accent_color && accent_color[0] != '\0') ? accent_color : ANSI_WHITE;
-    printf("  " ANSI_DIM "│" ANSI_RESET "  " ANSI_GRAY "%-24s" ANSI_RESET " %s%s" ANSI_RESET "\n",
-           label, col, value);
+bool ui_confirm(const char *question, bool def_val) {
+    char ans[32] = {0};
+    printf("  %s " ANSI_DIM "%s" ANSI_RESET " ", question, def_val ? "[S/n]" : "[s/N]");
+    fflush(stdout);
+
+    if (!fgets(ans, sizeof(ans), stdin)) {
+        return false;
+    }
+
+    size_t len = strlen(ans);
+    while (len > 0 && (ans[len - 1] == '\n' || ans[len - 1] == '\r' || ans[len - 1] == ' ')) {
+        ans[--len] = '\0';
+    }
+
+    if (ans[0] == '\0') return def_val;
+    return (_stricmp(ans, "s") == 0 || _stricmp(ans, "sim") == 0 || _stricmp(ans, "y") == 0);
 }
 
-void ui_card_end(int width) {
-    printf("  " ANSI_DIM "╰");
-    for (int i = 0; i < width; i++) printf("─");
-    printf("╯" ANSI_RESET "\n");
+void ui_pause(void) {
+    char dummy[16];
+    printf("\n  " ANSI_DIM "Pressione Enter para continuar." ANSI_RESET " ");
+    fflush(stdout);
+    fgets(dummy, sizeof(dummy), stdin);
 }
 
 void ui_format_bytes(uint64_t bytes, char *out_buf, size_t buf_size) {
@@ -267,88 +369,4 @@ void ui_format_bytes(uint64_t bytes, char *out_buf, size_t buf_size) {
     } else {
         snprintf(out_buf, buf_size, "%llu B", (unsigned long long)bytes);
     }
-}
-
-int ui_menu_select(const char *prompt_title, const char **items, const char **descriptions, int item_count) {
-    int selected = 0;
-
-    /* Check if stdin is an interactive console */
-    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
-    DWORD in_mode = 0;
-    if (!GetConsoleMode(hIn, &in_mode)) {
-        return item_count - 1;
-    }
-
-    printf("\n  " ANSI_CYAN ANSI_BOLD ":: %s" ANSI_RESET " " ANSI_DIM "(Use Setas CIMA/BAIXO, Numeros 1-%d ou ENTER)" ANSI_RESET "\n",
-           prompt_title, item_count);
-    ui_divider(84);
-
-    printf(ANSI_HIDE_CURSOR);
-    for (int i = 0; i < item_count; i++) {
-        printf("\n\n");
-    }
-
-    while (1) {
-        /* Move cursor up by item_count * 2 lines to redraw menu in-place */
-        printf("\033[%dA", item_count * 2);
-
-        for (int i = 0; i < item_count; i++) {
-            printf(ANSI_CLEAR_LINE);
-            if (i == selected) {
-                printf("  " ANSI_CYAN ANSI_BOLD ">>" ANSI_RESET " " BG_SELECT " [%d] %-36s " ANSI_RESET "\n",
-                       i + 1, items[i]);
-                printf(ANSI_CLEAR_LINE "        " ANSI_CYAN "╰─ %s" ANSI_RESET "\n",
-                       descriptions ? descriptions[i] : "");
-            } else {
-                printf("     " ANSI_GRAY "[%d] %-36s" ANSI_RESET "\n",
-                       i + 1, items[i]);
-                printf(ANSI_CLEAR_LINE "        " ANSI_DIM "   %s" ANSI_RESET "\n",
-                       descriptions ? descriptions[i] : "");
-            }
-        }
-        fflush(stdout);
-
-        int ch = _getch();
-        if (ch == 0 || ch == 224) {
-            int ext = _getch();
-            if (ext == 72) { /* Up arrow */
-                selected = (selected - 1 + item_count) % item_count;
-            } else if (ext == 80) { /* Down arrow */
-                selected = (selected + 1) % item_count;
-            }
-        } else if (ch == 13) { /* Enter */
-            printf(ANSI_SHOW_CURSOR);
-            return selected;
-        } else if (ch == 27 || ch == 'q' || ch == 'Q') { /* ESC or Q */
-            printf(ANSI_SHOW_CURSOR);
-            return item_count - 1;
-        } else if (ch == 'w' || ch == 'W' || ch == 'k' || ch == 'K') {
-            selected = (selected - 1 + item_count) % item_count;
-        } else if (ch == 's' || ch == 'S' || ch == 'j' || ch == 'J') {
-            selected = (selected + 1) % item_count;
-        } else if (ch >= '1' && ch <= '9') {
-            int idx = ch - '1';
-            if (idx < item_count) {
-                printf(ANSI_SHOW_CURSOR);
-                return idx;
-            }
-        }
-    }
-}
-
-bool ui_confirm_prompt(const char *question) {
-    printf("\n  " BG_AMBER " CONFIRMACAO " ANSI_RESET " " ANSI_WHITE ANSI_BOLD "%s" ANSI_RESET " " ANSI_CYAN "[S/N]: " ANSI_RESET, question);
-    fflush(stdout);
-
-    int ch = _getch();
-    printf("%c\n", (ch >= 32 && ch <= 126) ? ch : 'N');
-    return (ch == 's' || ch == 'S' || ch == 'y' || ch == 'Y');
-}
-
-void ui_wait_for_key(const char *prompt_msg) {
-    printf("\n  " ANSI_DIM ">> %s" ANSI_RESET,
-           prompt_msg ? prompt_msg : "Pressione qualquer tecla para voltar ao Menu Principal...");
-    fflush(stdout);
-    _getch();
-    printf("\n");
 }

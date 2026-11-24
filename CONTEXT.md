@@ -1,102 +1,52 @@
 # WINDOWS TWEAKER - PROJECT CONTEXT & HANDOFF GUIDE
 
-Este documento registra todo o contexto, decisoes de produto, regras visuais, arquitetura tecnica e proximos passos acordados durante a concepcao do **Windows Tweaker** (`windows-tweaker`). Use este arquivo ao clonar o repositorio em outra maquina (ou ao iniciar uma nova sessao com um assistente de IA) para retomar o desenvolvimento sem perder nenhum detalhe.
+Este documento registra o contexto, regras visuais, arquitetura tecnica e proximos passos do **Windows Tweaker** (`windows-tweaker`). Use este arquivo ao clonar o repositorio em outro PC para continuar o desenvolvimento.
 
 ---
 
-## 1. Objetivo do Projeto
+## 1. Estetica e Sistema Visual (Padrao `sudothi/Turtle`)
 
-Construir uma ferramenta de linha de comando (CLI) e interface interativa de terminal (TUI) em **C11 puro** para diagnostico, auditoria de armazenamento, limpeza inteligente de caches e otimizacao do sistema operacional Windows 10/11.
+A interface de terminal do `windows-tweaker` segue **exatamente a mesma arquitetura visual do CLI do projeto `sudothi/Turtle` (`apps/cli/src/ui.mjs` e `apps/cli/bin/turtle-setup.mjs`)**:
 
-O foco principal do projeto e ser uma **peca de destaque de portfolio para vagas de C / Sistemas / Baixo Nivel**, demonstrando:
-1. Uso direto das **APIs nativas do Windows (`Win32 API`)** sem depender de bibliotecas externas pesadas.
-2. Uso de instrucoes diretas de processador (**`__cpuid` / `__cpuidex`**) para telemetria de silicio e verificacao de BIOS/UEFI.
-3. Seguranca de engenharia: operacoes destrutivas ou que alteram estado (`clean`, `optimize`) possuem **modo de simulacao (`--dry-run`)** e inspecao previa transparente antes de modificar o disco ou o Registro.
-4. Utilidade real no dia a dia para identificar gargalos de performance, programas que atrasam o boot e arquivos gigantes esquecidos (*cold files*).
-
----
-
-## 2. Regras Estritas de Design e UX (NAO VIOLAR)
-
-1. **ZERO EMOJIS:**
-   - **Nunca utilize emojis** em nenhum arquivo de codigo (`.c`, `.h`), nos testes ou na documentacao (`README.md`, `CONTEXT.md`).
-   - Utilize apenas caracteres ASCII/Unicode geometricos limpos (`╭─╮`, `│`, `╰─╯`, `├─`, `>>`, `::`, `█`, `░`) e badges de texto com fundo colorido (`[ OK ]`, `[ ATENCAO ]`, `[ CRITICO ]`, `[ INFO ]`, `[ AJUSTE ]`).
-2. **Estetica de Terminal (Inspirada no Antigravity CLI):**
-   - **Emblema Principal em Degrade RGB TrueColor:** O cabecalho renderiza o logo ASCII `WIN TWEAKER` com interpolacao de cores 24-bit ANSI (`\033[38;2;R;G;Bm`) do Ciano Eletrico ao Violeta/Magenta.
-   - **Main Interface Interativa:** Ao executar `windows-tweaker.exe` sem argumentos (ou `windows-tweaker menu`), o programa abre um hub interativo navegavel pelas setas `CIMA`/`BAIXO` (ou teclas numericas `1-6`) e `ENTER`, usando `_getch()` e redesenho in-place sem piscar a tela.
-   - **Spinners e Barras de Progresso:** Animacoes suaves em Braille (`⠋ ⠙ ⠹ ⠸`) durante varreduras de disco e leituras de Registro.
-3. **Transparencia e Explicabilidade Total:**
-   - Nunca diga apenas que o sistema esta "mal otimizado": todo diagnostico deve exibir explicitamente o **`Impacto`** (por que aquilo prejudica o PC/FPS/Boot) e a **`Recomendacao`** (como corrigir).
-   - O **Health Score (0 a 100)** deve sempre listar o detalhamento exato de cada ponto descontado (`[-8 pts]`, `[-7 pts]`, `[-6 pts]`) e como recuperar esses pontos.
-   - Antes de remover arquivos, o usuario deve ter a opcao de **inspecionar exatamente quais pastas e amostras de arquivos serao removidos** (`inspect` / botao no menu).
+1. **Zero Emojis e Zero Blocos de Fundo Colorido:**
+   - Nao utilize emojis e nao utilize blocos com background colorido (`\x1b[48;...m`).
+   - Use apenas as cores de frente limpas do terminal: `bold` (`\x1b[1m`), `dim` (`\x1b[2m`), `red` (`\x1b[31m`), `green` (`\x1b[32m`), `yellow` (`\x1b[33m`), `cyan` (`\x1b[36m`) e `magenta` (`\x1b[35m`).
+2. **Banner Half-Block em Degrade Diagonal (`ui_banner`):**
+   - Arte em meio-bloco (`▄`, `▀`, `█`) de 35 colunas a esquerda com degrade diagonal TrueColor (`FIRE`: vermelho -> laranja -> amarelo) aplicado por codepoint UTF-8 completo, e o texto alinhado a direita (`Windows Tweaker / o seu PC, limpo e otimizado`).
+3. **Primitivas de Saida (`include/ui.h` / `src/ui.c`):**
+   - `ui_step(n, total, title)` -> `◆ 1/3 Titulo`
+   - `ui_ok(...)`   -> `  ✓ texto` (verde)
+   - `ui_warn(...)` -> `  ! texto` (amarelo)
+   - `ui_fail(...)` -> `  ✗ texto` (vermelho)
+   - `ui_info(...)` -> `  · texto` (dim)
+   - `ui_line(...)` -> `  │ texto` (linha vertical suave para explicacoes de "Por que importa" e "Como resolver")
+   - `ui_box(lines, count, title)` -> Caixa `╭─ Titulo ───╮` com largura calculada dinamicamente pelo comprimento visual UTF-8 das linhas.
+4. **Menu Interativo Simples e Direto:**
+   - Ao rodar `windows-tweaker.exe` sem argumentos, exibe o menu numerado (`1)` a `6)`, `0) Sair`, prompt `Numero:`), exatamente como em `turtle-setup.mjs`.
 
 ---
 
-## 3. Arquitetura Atual do Codigo (`v1.1.0`)
+## 2. Motor de Exclusao Real de Arquivos (`src/storage.c`)
 
-```text
-windows-tweaker/
-├── include/
-│   ├── ui.h          # Engine visual ANSI TrueColor, spinners, barras, cards e menu interativo
-│   ├── storage.h     # Estruturas de varredura de disco, caches e arquivos frios (cold files)
-│   ├── tweaks.h      # Auditoria do Registro (Run, PowerSchemes, TRIM, GameDVR, MenuShowDelay)
-│   └── hardware.h    # Telemetria de CPU (__cpuid), RAM (GlobalMemoryStatusEx) e BIOS/UEFI
-├── src/
-│   ├── main.c        # Hub interativo TUI, roteador de subcomandos CLI e calculo explicado do Score
-│   ├── ui.c          # Inicializacao UTF-8/VT100 no console Windows e componentes visuais
-│   ├── storage.c     # Crawler recursivo Win32 (FindFirstFileA), inspetor de remocao e limpeza
-│   ├── tweaks.c      # Leitura/Escrita segura no Registro do Windows (RegOpenKeyExA / RegSetValueExA)
-│   └── hardware.c    # Instrucoes __cpuid, deteccao de virtualizacao na BIOS, Secure Boot e HAGS
-├── tests/
-│   └── test_suite.c  # Suite de testes unitarios automatizados (10 assercoes)
-├── .github/workflows/
-│   └── ci.yml        # Pipeline GitHub Actions (compila com MSVC /W4 /O2 e roda os testes)
-├── build.bat         # Script de build para Windows MSVC (localiza vcvars64.bat automaticamente)
-├── Makefile          # Script de build alternativo para GCC / MinGW-w64 / Clang
-├── README.md         # Documentacao tecnica do repositorio (sem emojis)
-└── CONTEXT.md        # Este documento de contexto e continuidade
-```
+- **`storage_delete_single_file`:**
+  - Antes de chamar `DeleteFileA(path)`, limpa atributos `FILE_ATTRIBUTE_READONLY`, `FILE_ATTRIBUTE_HIDDEN` e `FILE_ATTRIBUTE_SYSTEM` via `SetFileAttributesA(path, FILE_ATTRIBUTE_NORMAL)`.
+  - Apos o `DeleteFileA`, **verifica no disco** com `GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES` que o arquivo realmente sumiu da pasta de origem.
+  - Se o arquivo estiver travado por um programa aberto (`ERROR_SHARING_VIOLATION`) ou exigir Administrador (`ERROR_ACCESS_DENIED`), informa o motivo exato ao usuario.
+- **Tela Interativa de Exclusao (`windows-tweaker limpar` ou opcao `2` do menu):**
+  - Mostra as pastas de cache temporario (com amostras reais dos arquivos la dentro) e a lista numerada (`1)`, `2)`...) dos arquivos grandes sem uso recente nas pastas de origem (`Downloads`, `Documents`, `Videos`, `Desktop`).
+  - O usuario pode digitar:
+    - `c` -> limpa todas as pastas de cache temporario (`%TEMP%`, `Win\Temp`, `SoftwareDistribution\Download`, `CrashDumps`, `D3DSCache`).
+    - `1` ou `1,3` -> exclui permanentemente o(s) arquivo(s) grande(s) escolhido(s) direto da pasta de origem.
+    - `t` -> limpa todos os caches e todos os arquivos grandes listados.
 
 ---
 
-## 4. Como Compilar e Rodar no Outro PC
+## 3. Como Compilar e Testar no Outro PC
 
-### Pre-requisitos no Windows
-- **Visual Studio Build Tools / Visual Studio Community** (com workload *Desktop development with C++*) **OU** **MinGW-w64 (`gcc`)**.
-- **Git** instalado.
-
-### Passo a Passo
 ```powershell
-# 1. Clonar o repositorio
 git clone https://github.com/sudothi/windows-tweaker.git
 cd windows-tweaker
-
-# 2. Compilar (com MSVC)
 .\build.bat
-
-# (Alternativa com MinGW/GCC)
-mingw32-make
-
-# 3. Rodar a suite de testes unitarios
 .\bin\test_suite.exe
-
-# 4. Abrir a Main Interface interativa
 .\bin\windows-tweaker.exe
 ```
-
----
-
-## 5. Roadmap de Evolucao (Proximas Features para Implementar)
-
-Quando retomar o projeto no outro PC, estas sao as melhores evolucoes para tornar o projeto ainda maior e mais impressionante:
-
-1. **Gerenciador Interativo de Startup (Ativar/Desativar pelo Terminal):**
-   - Permitir selecionar um dos programas listados em `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` com as setas do teclado e desativa-lo (movendo para uma subchave de backup `RunDisabled` com possibilidade de restaurar a qualquer momento).
-2. **Detector Ultrarrapido de Arquivos Duplicados (Fast Partial Hashing):**
-   - Agrupar arquivos grandes pelo tamanho exato em bytes e calcular um hash rapido (ex: FNV-1a ou SHA-256) apenas dos primeiros e ultimos 64 KB para encontrar instaladores, ISOs e videos duplicados instantaneamente.
-3. **Cacador de Pastas de Desenvolvimento Esquecidas (`node_modules`, `target`, `.venv`, `build`):**
-   - Um modulo dedicado para desenvolvedores que varre pastas de projetos antigos e encontra `node_modules` ou pastas de build cujo projeto nao e modificado ha mais de 60 dias.
-4. **Ativador Direto de Plano de Energia (High / Ultimate Performance):**
-   - Integrar chamada nativa a API `PowerSetActiveScheme` (`powrprof.lib`) para permitir alternar entre *Equilibrado* e *Alto Desempenho* diretamente por um botao na interface.
-5. **Exportacao de Relatorio de Auditoria (`.txt` / `.json`):**
-   - Adicionar flag `--export relatorio.json` para salvar o diagnostico completo de hardware, BIOS, disco e sistema.

@@ -46,12 +46,8 @@ static void scan_dir_size_recursive(
     }
 
     do {
-        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) {
-            continue;
-        }
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
-            continue;
-        }
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
 
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             char child_path[MAX_PATH];
@@ -65,7 +61,9 @@ static void scan_dir_size_recursive(
             (*acc_files)++;
 
             if ((*acc_files % 350) == 0 && spinner_label) {
-                ui_spinner_tick(g_spinner_step++, "Mapeando caches de armazenamento...", spinner_label);
+                char msg[160];
+                snprintf(msg, sizeof(msg), "Analisando %s (%u arquivos)...", spinner_label, *acc_files);
+                ui_spinner_update(g_spinner_step++, msg);
             }
         }
     } while (FindNextFileA(hFind, &fd));
@@ -89,6 +87,7 @@ static void record_cold_file(storage_report_t *report, const char *full_path, ui
     report->cold_files[insert_idx].path[sizeof(report->cold_files[insert_idx].path) - 1] = '\0';
     report->cold_files[insert_idx].size_bytes  = size_bytes;
     report->cold_files[insert_idx].days_unused = days_unused;
+    report->cold_files[insert_idx].deleted     = false;
 
     for (int i = insert_idx; i > 0; i--) {
         if (report->cold_files[i].size_bytes > report->cold_files[i - 1].size_bytes) {
@@ -134,7 +133,9 @@ static void scan_cold_files_recursive(
         } else {
             (*inspected_count)++;
             if ((*inspected_count % 250) == 0) {
-                ui_spinner_tick(g_spinner_step++, "Buscando arquivos grandes sem uso recente...", dir_path);
+                char msg[160];
+                snprintf(msg, sizeof(msg), "Procurando arquivos grandes sem uso em %s...", dir_path);
+                ui_spinner_update(g_spinner_step++, msg);
             }
 
             ULARGE_INTEGER fsize;
@@ -186,7 +187,9 @@ static void add_cache_candidate(
     target->exists        = true;
     target->safe_to_clean = safe_to_clean;
 
-    ui_spinner_tick(g_spinner_step++, "Auditando diretorio de cache...", name);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Verificando %s...", name);
+    ui_spinner_update(g_spinner_step++, msg);
     scan_dir_size_recursive(path, 0, 5, &target->size_bytes, &target->file_count, name);
 
     report->total_cache_bytes += target->size_bytes;
@@ -229,44 +232,40 @@ void storage_run_audit(storage_report_t *report, uint64_t min_cold_size_mb, int 
     char path_buf[MAX_PATH];
 
     if (temp_dir[0]) {
-        add_cache_candidate(report, "User Temp (%TEMP%)", temp_dir,
-                            "Arquivos temporarios de instaladores, descompactadores e sessoes antigas", true);
+        add_cache_candidate(report, "Temp do Usuario (%TEMP%)", temp_dir,
+                            "Arquivos temporarios deixados por instaladores e programas", true);
     }
 
     if (windir[0]) {
         snprintf(path_buf, sizeof(path_buf), "%s\\Temp", windir);
-        add_cache_candidate(report, "System Temp (Win\\Temp)", path_buf,
-                            "Logs e arquivos temporarios criados por servicos internos do Windows", true);
-
-        snprintf(path_buf, sizeof(path_buf), "%s\\Prefetch", windir);
-        add_cache_candidate(report, "Windows Prefetch Cache", path_buf,
-                            "Indices de pre-carregamento de executaveis gerenciados pelo kernel", false);
+        add_cache_candidate(report, "Temp do Sistema (Win\\Temp)", path_buf,
+                            "Arquivos temporarios de servicos do Windows", true);
 
         snprintf(path_buf, sizeof(path_buf), "%s\\SoftwareDistribution\\Download", windir);
-        add_cache_candidate(report, "Windows Update Cache", path_buf,
-                            "Instaladores de atualizacoes do Windows ja baixadas anteriormente", true);
+        add_cache_candidate(report, "Cache do Windows Update", path_buf,
+                            "Pacotes antigos de atualizacao ja baixados pelo Windows", true);
     }
 
     if (local_appdata[0]) {
         snprintf(path_buf, sizeof(path_buf), "%s\\CrashDumps", local_appdata);
-        add_cache_candidate(report, "Application CrashDumps", path_buf,
-                            "Despejos de memoria (.dmp) gravados quando programas travam ou fecham", true);
+        add_cache_candidate(report, "Relatorios de Erro (CrashDumps)", path_buf,
+                            "Despejos de memoria (.dmp) gravados quando um app trava", true);
 
         snprintf(path_buf, sizeof(path_buf), "%s\\D3DSCache", local_appdata);
-        add_cache_candidate(report, "DirectX Shader Cache", path_buf,
-                            "Shaders compilados de jogos e placas de video (recriados sob demanda)", true);
+        add_cache_candidate(report, "Cache de Shaders DirectX", path_buf,
+                            "Shaders antigos compilados pela placa de video", true);
 
         snprintf(path_buf, sizeof(path_buf), "%s\\npm-cache", local_appdata);
-        add_cache_candidate(report, "NPM Package Cache", path_buf,
-                            "Cache local de bibliotecas Node.js baixadas pelo gerenciador npm", false);
+        add_cache_candidate(report, "Cache do NPM (Node.js)", path_buf,
+                            "Pacotes JavaScript guardados pelo gerenciador npm", false);
 
         snprintf(path_buf, sizeof(path_buf), "%s\\pip\\Cache", local_appdata);
-        add_cache_candidate(report, "Python Pip Cache", path_buf,
-                            "Rodas (.whl) e pacotes Python armazenados em cache pelo pip", false);
+        add_cache_candidate(report, "Cache do Pip (Python)", path_buf,
+                            "Bibliotecas Python baixadas anteriormente pelo pip", false);
 
         snprintf(path_buf, sizeof(path_buf), "%s\\Google\\Chrome\\User Data\\Default\\Cache", local_appdata);
-        add_cache_candidate(report, "Chrome Browser Cache", path_buf,
-                            "Imagens, scripts e ativos web salvos pelo navegador Google Chrome", false);
+        add_cache_candidate(report, "Cache do Google Chrome", path_buf,
+                            "Arquivos temporarios de sites visitados no navegador", false);
     }
 
     uint64_t min_bytes = min_cold_size_mb * 1024ULL * 1024ULL;
@@ -288,85 +287,65 @@ void storage_run_audit(storage_report_t *report, uint64_t min_cold_size_mb, int 
     QueryPerformanceCounter(&t_end);
     report->scan_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
-    char summary_buf[128];
+    char summary_buf[160];
     char size_buf[32];
     ui_format_bytes(report->total_cache_bytes + report->total_cold_bytes, size_buf, sizeof(size_buf));
-    snprintf(summary_buf, sizeof(summary_buf), "Mapeados %s em %u arquivos de cache e %d arquivo(s) frio(s)",
+    snprintf(summary_buf, sizeof(summary_buf), "Armazenamento verificado: %s encontrados (%u arquivos de cache, %d arquivos grandes)",
              size_buf, report->total_cache_files, report->cold_file_count);
-    ui_spinner_finish(UI_STATUS_OK, "Auditoria de Armazenamento", summary_buf, report->scan_elapsed_ms);
+    ui_spinner_stop(summary_buf, true);
 }
 
 void storage_print_report(const storage_report_t *report) {
-    ui_section_header("DISCO", "AUDITORIA DE ARMAZENAMENTO E CACHES", "Capacidade do SSD, lixo temporario e arquivos esquecidos");
-
     if (report->total_bytes > 0) {
         double ratio = (double)report->used_bytes / (double)report->total_bytes;
         char used_s[32], total_s[32], free_s[32], bar_s[256];
         ui_format_bytes(report->used_bytes, used_s, sizeof(used_s));
         ui_format_bytes(report->total_bytes, total_s, sizeof(total_s));
         ui_format_bytes(report->free_bytes, free_s, sizeof(free_s));
-        ui_usage_bar(ratio, 28, bar_s, sizeof(bar_s));
-
-        printf("  " ANSI_WHITE ANSI_BOLD "Unidade %-4s" ANSI_RESET " [%s] " ANSI_BOLD "%5.1f%%" ANSI_RESET
-               "  " ANSI_GRAY "%s usados de %s (" ANSI_CYAN "%s livres" ANSI_GRAY ")" ANSI_RESET "\n",
-               report->drive_root, bar_s, ratio * 100.0, used_s, total_s, free_s);
+        ui_bar(ratio, 20, bar_s, sizeof(bar_s));
 
         if (ratio >= 0.85) {
-            printf("               " ANSI_RED "╰─ Explicacao: SSDs com mais de 85%% de ocupacao sofrem queda de velocidade de escrita (Write Amplification)." ANSI_RESET "\n");
+            ui_warn("Disco %s [%s] %.1f%% cheio (%s usados de %s, apenas %s livres)",
+                    report->drive_root, bar_s, ratio * 100.0, used_s, total_s, free_s);
+            ui_line(ANSI_DIM "Por que importa: SSDs acima de 85%% de uso perdem velocidade de escrita." ANSI_RESET);
         } else {
-            printf("               " ANSI_DIM "╰─ Explicacao: O disco possui margem livre saudavel para operacoes de TRIM e memoria virtual." ANSI_RESET "\n");
+            ui_ok("Disco %s [%s] %.1f%% em uso (%s livres de %s)",
+                  report->drive_root, bar_s, ratio * 100.0, free_s, total_s);
         }
-        printf("\n");
     }
-
-    printf("  " ANSI_CYAN ANSI_BOLD "%-26s %-13s %-10s %s" ANSI_RESET "\n",
-           "LOCAL DE CACHE / TEMP", "TAMANHO", "ARQUIVOS", "STATUS DE LIMPEZA");
-    ui_divider(84);
 
     for (int i = 0; i < report->cache_count; i++) {
         const cache_target_t *c = &report->caches[i];
+        if (c->size_bytes == 0) continue;
+
         char sz[32];
         ui_format_bytes(c->size_bytes, sz, sizeof(sz));
 
-        const char *size_col = (c->size_bytes > 250ULL * 1024 * 1024) ? ANSI_AMBER :
-                               (c->size_bytes > 20ULL * 1024 * 1024)  ? ANSI_CYAN  : ANSI_GRAY;
-
-        const char *tag = c->safe_to_clean
-            ? (ANSI_GREEN "[LIMPEZA AUTOMATICA SEGURA]" ANSI_RESET)
-            : (ANSI_DIM   "[CACHE DE FERRAMENTA/APP]" ANSI_RESET);
-
-        printf("  " ANSI_WHITE ANSI_BOLD "%-26s" ANSI_RESET " %s%-13s" ANSI_RESET " " ANSI_GRAY "%-10u" ANSI_RESET " %s\n",
-               c->name, size_col, sz, c->file_count, tag);
-        printf("    " ANSI_DIM "├─ Caminho   : %s" ANSI_RESET "\n", c->path);
-        printf("    " ANSI_DIM "╰─ O que e   : %s" ANSI_RESET "\n", c->explanation);
+        if (c->safe_to_clean && c->size_bytes > 50ULL * 1024 * 1024) {
+            ui_warn("%-32s " ANSI_BOLD "%-10s" ANSI_RESET " " ANSI_DIM "(%u arquivos · %s)" ANSI_RESET,
+                    c->name, sz, c->file_count, c->explanation);
+        } else {
+            ui_info("%-32s %-10s " ANSI_DIM "(%u arquivos · %s)" ANSI_RESET,
+                    c->name, sz, c->file_count, c->explanation);
+        }
     }
 
-    char total_cache_str[32], cleanable_str[32];
-    ui_format_bytes(report->total_cache_bytes, total_cache_str, sizeof(total_cache_str));
-    ui_format_bytes(report->safe_cleanable_bytes, cleanable_str, sizeof(cleanable_str));
-    ui_divider(84);
-    printf("  " ANSI_BOLD "Total em Caches Mapeados : " ANSI_CYAN "%-14s" ANSI_RESET
-           "  |  " ANSI_GREEN ANSI_BOLD "Limpeza Imediata Segura: %s" ANSI_RESET "\n",
-           total_cache_str, cleanable_str);
-
-    printf("\n  " BG_AMBER " ARQUIVOS FRIOS " ANSI_RESET " " ANSI_AMBER ANSI_BOLD "ARQUIVOS GRANDES ESQUECIDOS (Sem uso recente nas suas pastas)" ANSI_RESET "\n");
-    printf("  " ANSI_DIM "Explicacao: Arquivos pesados (>50 MB) que nao sao abertos ou modificados ha mais de 30 dias.\n"
-           "  Eles nao sao apagados automaticamente para sua seguranca, mas revisa-los libera muito espaco." ANSI_RESET "\n");
-    ui_divider(84);
-
-    if (report->cold_file_count == 0) {
-        printf("  " ANSI_GREEN "[OK]" ANSI_RESET " " ANSI_GRAY "Nenhum arquivo gigante esquecido foi encontrado nas pastas do usuario." ANSI_RESET "\n");
-    } else {
-        for (int i = 0; i < report->cold_file_count; i++) {
-            char sz[32];
-            ui_format_bytes(report->cold_files[i].size_bytes, sz, sizeof(sz));
-            printf("  " ANSI_AMBER ANSI_BOLD "%-11s" ANSI_RESET " " ANSI_DIM "[%3d dias sem uso]" ANSI_RESET "  " ANSI_WHITE "%s" ANSI_RESET "\n",
-                   sz, report->cold_files[i].days_unused, report->cold_files[i].path);
+    if (report->cold_file_count > 0) {
+        char cold_sz[32];
+        ui_format_bytes(report->total_cold_bytes, cold_sz, sizeof(cold_sz));
+        ui_warn("%d arquivo(s) grande(s) esquecido(s) somando " ANSI_BOLD "%s" ANSI_RESET " (sem uso ha +30 dias)",
+                report->cold_file_count, cold_sz);
+        for (int i = 0; i < report->cold_file_count && i < 5; i++) {
+            char fsz[32];
+            ui_format_bytes(report->cold_files[i].size_bytes, fsz, sizeof(fsz));
+            ui_line(ANSI_YELLOW "%-10s" ANSI_RESET " " ANSI_DIM "(%d dias)" ANSI_RESET "  %s",
+                    fsz, report->cold_files[i].days_unused, report->cold_files[i].path);
         }
+    } else {
+        ui_ok("Nenhum arquivo gigante esquecido encontrado nas pastas pessoais");
     }
 }
 
-/* List sample files inside a directory so the user can see what will be deleted */
 static void preview_files_in_dir(const char *dir_path, int *printed, int max_to_print) {
     if (*printed >= max_to_print) return;
 
@@ -394,7 +373,7 @@ static void preview_files_in_dir(const char *dir_path, int *printed, int max_to_
             char sz[32];
             ui_format_bytes(fsize.QuadPart, sz, sizeof(sz));
 
-            printf("      " ANSI_RED "[-]" ANSI_RESET " " ANSI_GRAY "%-10s" ANSI_RESET " %s\n", sz, full_path);
+            ui_line("  " ANSI_DIM "%-10s  %s" ANSI_RESET, sz, full_path);
             (*printed)++;
         }
     } while (FindNextFileA(hFind, &fd));
@@ -403,52 +382,102 @@ static void preview_files_in_dir(const char *dir_path, int *printed, int max_to_
 }
 
 void storage_print_removal_preview(const storage_report_t *report) {
-    ui_section_header("INSPECAO", "DETALHAMENTO EXATO DE ARQUIVOS PARA REMOCAO",
-                      "Veja exatamente o que sera removido antes de confirmar");
+    printf("\n  " ANSI_BOLD "1. Pastas de Cache Temporario" ANSI_RESET " " ANSI_DIM "(digite 'c' para limpar todas as pastas abaixo)" ANSI_RESET "\n\n");
 
-    printf("  " ANSI_WHITE "1. CACHES TEMPORARIOS QUE SERAO LIMPOS AUTOMATICAMENTE:" ANSI_RESET "\n");
-    printf("  " ANSI_DIM "   (Arquivos atualmente abertos/travados pelo Windows sao ignorados com seguranca)" ANSI_RESET "\n\n");
-
+    int shown_caches = 0;
     for (int i = 0; i < report->cache_count; i++) {
         const cache_target_t *c = &report->caches[i];
         if (!c->safe_to_clean || c->file_count == 0) continue;
+        shown_caches++;
 
         char sz[32];
         ui_format_bytes(c->size_bytes, sz, sizeof(sz));
-
-        printf("  " BG_CYAN " PASTA " ANSI_RESET " " ANSI_WHITE ANSI_BOLD "%s" ANSI_RESET
-               "  (" ANSI_CYAN "%s" ANSI_RESET " em %u arquivos)\n",
-               c->name, sz, c->file_count);
-        printf("    " ANSI_DIM "Caminho : %s" ANSI_RESET "\n", c->path);
-        printf("    " ANSI_DIM "Motivo  : %s" ANSI_RESET "\n", c->explanation);
-        printf("    " ANSI_GRAY "Amostra de arquivos reais encontrados nesta pasta:" ANSI_RESET "\n");
+        ui_warn(ANSI_BOLD "%s" ANSI_RESET " — " ANSI_YELLOW "%s" ANSI_RESET " (%u arquivos)",
+                c->name, sz, c->file_count);
+        ui_line(ANSI_DIM "Pasta : %s" ANSI_RESET, c->path);
+        ui_line(ANSI_DIM "O que : %s" ANSI_RESET, c->explanation);
 
         int printed = 0;
-        preview_files_in_dir(c->path, &printed, 6);
+        preview_files_in_dir(c->path, &printed, 4);
         if ((int)c->file_count > printed) {
-            printf("      " ANSI_DIM "... e mais %u arquivo(s) temporario(s) nesta pasta." ANSI_RESET "\n",
-                   c->file_count - (uint32_t)printed);
+            ui_line("  " ANSI_DIM "... e mais %u arquivos nesta pasta" ANSI_RESET, c->file_count - (uint32_t)printed);
         }
         printf("\n");
     }
 
-    printf("  " ANSI_WHITE "2. ARQUIVOS GRANDES SEM USO RECENTE (REVISAO MANUAL RECOMENDADA):" ANSI_RESET "\n");
-    ui_divider(84);
+    if (shown_caches == 0) {
+        ui_ok("As pastas de cache temporario ja estao limpas.");
+    }
+
+    printf("  " ANSI_BOLD "2. Arquivos Grandes nas Suas Pastas" ANSI_RESET " " ANSI_DIM "(digite o numero do arquivo, ex.: 1 ou 1,2 para excluir da pasta de origem)" ANSI_RESET "\n\n");
+
     if (report->cold_file_count == 0) {
-        printf("    " ANSI_GRAY "Nenhum arquivo grande esquecido encontrado." ANSI_RESET "\n");
+        ui_ok("Nenhum arquivo grande sem uso recente encontrado.");
     } else {
         for (int i = 0; i < report->cold_file_count; i++) {
+            const cold_file_t *cf = &report->cold_files[i];
             char sz[32];
-            ui_format_bytes(report->cold_files[i].size_bytes, sz, sizeof(sz));
-            printf("    " ANSI_AMBER "[%2d]" ANSI_RESET " " ANSI_AMBER ANSI_BOLD "%-10s" ANSI_RESET
-                   " (%3d dias sem abrir) -> " ANSI_WHITE "%s" ANSI_RESET "\n",
-                   i + 1, sz, report->cold_files[i].days_unused, report->cold_files[i].path);
+            ui_format_bytes(cf->size_bytes, sz, sizeof(sz));
+            if (cf->deleted) {
+                printf("   " ANSI_DIM "%2d) [EXCLUIDO] %s" ANSI_RESET "\n", i + 1, cf->path);
+            } else {
+                printf("   " ANSI_BOLD "%2d)" ANSI_RESET " " ANSI_YELLOW "%-10s" ANSI_RESET
+                       " " ANSI_DIM "(%3d dias sem uso)" ANSI_RESET "  %s\n",
+                       i + 1, sz, cf->days_unused, cf->path);
+            }
         }
     }
-    ui_divider(84);
+    printf("\n");
 }
 
-static void clean_dir_contents(const char *dir_path, bool dry_run, uint64_t *bytes_freed, uint32_t *files_deleted) {
+bool storage_delete_single_file(const char *path, uint64_t *out_freed_bytes, char *err_buf, size_t err_size) {
+    if (out_freed_bytes) *out_freed_bytes = 0;
+    if (err_buf && err_size > 0) err_buf[0] = '\0';
+
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad)) {
+        if (err_buf) snprintf(err_buf, err_size, "Arquivo nao encontrado no disco");
+        return false;
+    }
+
+    ULARGE_INTEGER fsize;
+    fsize.LowPart  = fad.nFileSizeLow;
+    fsize.HighPart = fad.nFileSizeHigh;
+
+    /* Remove atributo somente-leitura ou oculto que impede DeleteFileA */
+    if (fad.dwFileAttributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) {
+        SetFileAttributesA(path, FILE_ATTRIBUTE_NORMAL);
+    }
+
+    if (!DeleteFileA(path)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION) {
+            if (err_buf) snprintf(err_buf, err_size, "Arquivo aberto/em uso por outro programa no momento");
+        } else if (err == ERROR_ACCESS_DENIED) {
+            if (err_buf) snprintf(err_buf, err_size, "Permissao negada pelo Windows (abra o terminal como Administrador)");
+        } else {
+            if (err_buf) snprintf(err_buf, err_size, "Codigo de erro do Windows: %lu", (unsigned long)err);
+        }
+        return false;
+    }
+
+    /* Confirma no disco que o arquivo realmente deixou de existir na pasta de origem */
+    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
+        if (err_buf) snprintf(err_buf, err_size, "O Windows agendou a exclusao, mas o arquivo ainda possui handle aberto");
+        return false;
+    }
+
+    if (out_freed_bytes) *out_freed_bytes = fsize.QuadPart;
+    return true;
+}
+
+static void clean_dir_contents_recursive(
+    const char *dir_path,
+    bool dry_run,
+    uint64_t *bytes_freed,
+    uint32_t *files_deleted,
+    uint32_t *files_locked
+) {
     char search_pattern[MAX_PATH];
     snprintf(search_pattern, sizeof(search_pattern), "%s\\*", dir_path);
 
@@ -464,8 +493,9 @@ static void clean_dir_contents(const char *dir_path, bool dry_run, uint64_t *byt
         snprintf(full_path, sizeof(full_path), "%s\\%s", dir_path, fd.cFileName);
 
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            clean_dir_contents(full_path, dry_run, bytes_freed, files_deleted);
+            clean_dir_contents_recursive(full_path, dry_run, bytes_freed, files_deleted, files_locked);
             if (!dry_run) {
+                SetFileAttributesA(full_path, FILE_ATTRIBUTE_NORMAL);
                 RemoveDirectoryA(full_path);
             }
         } else {
@@ -477,9 +507,12 @@ static void clean_dir_contents(const char *dir_path, bool dry_run, uint64_t *byt
                 *bytes_freed += fsize.QuadPart;
                 (*files_deleted)++;
             } else {
-                if (DeleteFileA(full_path)) {
-                    *bytes_freed += fsize.QuadPart;
+                uint64_t freed = 0;
+                if (storage_delete_single_file(full_path, &freed, NULL, 0)) {
+                    *bytes_freed += freed;
                     (*files_deleted)++;
+                } else {
+                    if (files_locked) (*files_locked)++;
                 }
             }
         }
@@ -488,36 +521,57 @@ static void clean_dir_contents(const char *dir_path, bool dry_run, uint64_t *byt
     FindClose(hFind);
 }
 
-void storage_clean_caches(bool dry_run, uint64_t *out_bytes_cleaned, uint32_t *out_files_cleaned) {
+void storage_clean_single_cache(
+    const cache_target_t *cache,
+    bool dry_run,
+    uint64_t *out_bytes_cleaned,
+    uint32_t *out_files_cleaned,
+    uint32_t *out_files_locked
+) {
+    uint64_t b_freed = 0;
+    uint32_t f_del   = 0;
+    uint32_t f_lock  = 0;
+
+    clean_dir_contents_recursive(cache->path, dry_run, &b_freed, &f_del, &f_lock);
+
+    if (out_bytes_cleaned) *out_bytes_cleaned += b_freed;
+    if (out_files_cleaned) *out_files_cleaned += f_del;
+    if (out_files_locked)  *out_files_locked  += f_lock;
+
+    char sz[32];
+    ui_format_bytes(b_freed, sz, sizeof(sz));
+
+    if (dry_run) {
+        ui_info("%s: %u arquivos (%s) prontos para limpar", cache->name, f_del, sz);
+    } else if (f_del > 0) {
+        if (f_lock > 0) {
+            ui_ok("%s: %u arquivos excluidos (%s liberados) " ANSI_DIM "· %u ignorados por estarem em uso agora" ANSI_RESET,
+                  cache->name, f_del, sz, f_lock);
+        } else {
+            ui_ok("%s: %u arquivos excluidos (%s liberados)", cache->name, f_del, sz);
+        }
+    } else if (f_lock > 0) {
+        ui_warn("%s: %u arquivos estao abertos/em uso por processos em execucao (0 excluidos)",
+                cache->name, f_lock);
+    } else {
+        ui_info("%s: pasta ja estava vazia", cache->name);
+    }
+}
+
+void storage_clean_caches(
+    const storage_report_t *report,
+    bool dry_run,
+    uint64_t *out_bytes_cleaned,
+    uint32_t *out_files_cleaned,
+    uint32_t *out_files_locked
+) {
     *out_bytes_cleaned = 0;
     *out_files_cleaned = 0;
+    if (out_files_locked) *out_files_locked = 0;
 
-    char temp_dir[MAX_PATH] = {0};
-    char local_appdata[MAX_PATH] = {0};
-    GetTempPathA(sizeof(temp_dir), temp_dir);
-    GetEnvironmentVariableA("LOCALAPPDATA", local_appdata, sizeof(local_appdata));
-
-    size_t tlen = strlen(temp_dir);
-    if (tlen > 3 && temp_dir[tlen - 1] == '\\') {
-        temp_dir[tlen - 1] = '\0';
+    for (int i = 0; i < report->cache_count; i++) {
+        const cache_target_t *c = &report->caches[i];
+        if (!c->safe_to_clean || !c->exists) continue;
+        storage_clean_single_cache(c, dry_run, out_bytes_cleaned, out_files_cleaned, out_files_locked);
     }
-
-    const char *mode_label = dry_run ? "Simulando Limpeza (--dry-run)" : "Limpando Caches Temporarios";
-    ui_progress_bar(1, 3, mode_label, "Analisando %TEMP%");
-
-    if (temp_dir[0]) {
-        clean_dir_contents(temp_dir, dry_run, out_bytes_cleaned, out_files_cleaned);
-    }
-
-    ui_progress_bar(2, 3, mode_label, "Analisando CrashDumps & D3DSCache");
-    if (local_appdata[0]) {
-        char crash_dir[MAX_PATH];
-        snprintf(crash_dir, sizeof(crash_dir), "%s\\CrashDumps", local_appdata);
-        DWORD attr = GetFileAttributesA(crash_dir);
-        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
-            clean_dir_contents(crash_dir, dry_run, out_bytes_cleaned, out_files_cleaned);
-        }
-    }
-
-    ui_progress_bar(3, 3, mode_label, "Concluido");
 }

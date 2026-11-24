@@ -51,6 +51,11 @@ static void query_cpuid_info(hardware_report_t *report) {
         const char *p = brand;
         while (*p == ' ') p++;
         strncpy(report->cpu_brand, p, sizeof(report->cpu_brand) - 1);
+        /* Remove trailing spaces */
+        size_t len = strlen(report->cpu_brand);
+        while (len > 0 && report->cpu_brand[len - 1] == ' ') {
+            report->cpu_brand[--len] = '\0';
+        }
     } else {
         strncpy(report->cpu_brand, "Generic x86_64 Processor", sizeof(report->cpu_brand) - 1);
     }
@@ -66,7 +71,7 @@ void hardware_run_audit(hardware_report_t *report) {
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t_start);
 
-    ui_spinner_tick(0, "Inspecionando registradores da CPU via __cpuid...", "x86_64 Silicon");
+    ui_spinner_update(0, "Lendo registradores da CPU (__cpuid)...");
     query_cpuid_info(report);
 
     SYSTEM_INFO sys_info;
@@ -74,7 +79,7 @@ void hardware_run_audit(hardware_report_t *report) {
     report->logical_cores = sys_info.dwNumberOfProcessors;
     report->virt_firmware_enabled = (IsProcessorFeaturePresent(PF_VIRT_FIRMWARE_ENABLED) != 0);
 
-    ui_spinner_tick(3, "Consultando memoria RAM fisica e kernel...", "GlobalMemoryStatusEx");
+    ui_spinner_update(3, "Verificando memoria RAM e BIOS/UEFI...");
     MEMORYSTATUSEX mem_stat;
     mem_stat.dwLength = sizeof(mem_stat);
     if (GlobalMemoryStatusEx(&mem_stat)) {
@@ -84,18 +89,17 @@ void hardware_run_audit(hardware_report_t *report) {
         report->ram_load_pct    = mem_stat.dwMemoryLoad;
     }
 
-    ui_spinner_tick(6, "Lendo descritores da BIOS/UEFI e Placa-Mae...", "SMBIOS Registry");
     if (!hw_reg_read_str(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS",
                          "BaseBoardManufacturer", report->board_vendor, sizeof(report->board_vendor))) {
-        strncpy(report->board_vendor, "Standard OEM", sizeof(report->board_vendor) - 1);
+        strncpy(report->board_vendor, "OEM", sizeof(report->board_vendor) - 1);
     }
     if (!hw_reg_read_str(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS",
                          "BaseBoardProduct", report->board_product, sizeof(report->board_product))) {
-        strncpy(report->board_product, "System Board", sizeof(report->board_product) - 1);
+        strncpy(report->board_product, "Board", sizeof(report->board_product) - 1);
     }
     if (!hw_reg_read_str(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS",
                          "BIOSVersion", report->bios_version, sizeof(report->bios_version))) {
-        strncpy(report->bios_version, "UEFI Firmware", sizeof(report->bios_version) - 1);
+        strncpy(report->bios_version, "UEFI", sizeof(report->bios_version) - 1);
     }
 
     DWORD sb_val = 0;
@@ -115,81 +119,55 @@ void hardware_run_audit(hardware_report_t *report) {
     QueryPerformanceCounter(&t_end);
     report->probe_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
-    char summary[128];
-    snprintf(summary, sizeof(summary), "%s (%u threads)", report->cpu_brand, report->logical_cores);
-    ui_spinner_finish(UI_STATUS_OK, "Auditoria de Hardware e BIOS", summary, report->probe_elapsed_ms);
+    char summary[160];
+    snprintf(summary, sizeof(summary), "Hardware detectado: %s (%u threads)", report->cpu_brand, report->logical_cores);
+    ui_spinner_stop(summary, true);
 }
 
 void hardware_print_report(const hardware_report_t *report) {
-    ui_section_header("HARDWARE", "TELEMETRIA DE HARDWARE, MEMORIA E BIOS/UEFI",
-                      "Leitura direta dos registradores do processador e firmware da placa-mae");
+    ui_ok("Processador : " ANSI_BOLD "%s" ANSI_RESET " " ANSI_DIM "(%u threads · %s)" ANSI_RESET,
+          report->cpu_brand, report->logical_cores, report->avx2_supported ? "AVX2 256-bit" : "SSE2");
 
-    ui_card_begin("PERFIL FISICO DA MAQUINA", 82);
+    ui_info("Placa-mae   : %s %s " ANSI_DIM "(BIOS %s)" ANSI_RESET,
+            report->board_vendor, report->board_product, report->bios_version);
 
-    char cpu_line[128];
-    snprintf(cpu_line, sizeof(cpu_line), "%s (%u Threads Logicas)", report->cpu_brand, report->logical_cores);
-    ui_card_row("Processador (CPU)", cpu_line, ANSI_WHITE ANSI_BOLD, 82);
-
-    char board_line[128];
-    snprintf(board_line, sizeof(board_line), "%s %s (Versao da BIOS: %s)",
-             report->board_vendor, report->board_product, report->bios_version);
-    ui_card_row("Placa-Mae / BIOS", board_line, ANSI_GRAY, 82);
-
-    char ram_used_s[32], ram_tot_s[32], ram_bar[256], ram_line[384];
+    char ram_used_s[32], ram_tot_s[32], ram_bar[256];
     ui_format_bytes(report->ram_used_bytes, ram_used_s, sizeof(ram_used_s));
     ui_format_bytes(report->ram_total_bytes, ram_tot_s, sizeof(ram_tot_s));
-    ui_usage_bar((double)report->ram_load_pct / 100.0, 20, ram_bar, sizeof(ram_bar));
-    snprintf(ram_line, sizeof(ram_line), "[%s] %u%% em uso (%s / %s)",
-             ram_bar, report->ram_load_pct, ram_used_s, ram_tot_s);
-    ui_card_row("Memoria RAM Fisica", ram_line, ANSI_WHITE, 82);
+    ui_bar((double)report->ram_load_pct / 100.0, 18, ram_bar, sizeof(ram_bar));
+
+    if (report->ram_load_pct > 85) {
+        ui_warn("Memoria RAM : [%s] " ANSI_BOLD "%u%%" ANSI_RESET " (%s usados de %s)",
+                ram_bar, report->ram_load_pct, ram_used_s, ram_tot_s);
+        ui_line(ANSI_DIM "Por que importa: acima de 85%% o Windows passa a usar o SSD como memoria (pagefile), causando travadinhas." ANSI_RESET);
+    } else {
+        ui_ok("Memoria RAM : [%s] " ANSI_BOLD "%u%%" ANSI_RESET " (%s usados de %s)",
+              ram_bar, report->ram_load_pct, ram_used_s, ram_tot_s);
+    }
 
     uint64_t days  = report->uptime_seconds / 86400;
     uint64_t hours = (report->uptime_seconds % 86400) / 3600;
     uint64_t mins  = (report->uptime_seconds % 3600) / 60;
-    char uptime_line[128];
-    snprintf(uptime_line, sizeof(uptime_line), "%llud %lluh %llum %s",
-             (unsigned long long)days, (unsigned long long)hours, (unsigned long long)mins,
-             days >= 7 ? "(Recomendado reiniciar para limpar cache de kernel)" : "(Tempo de atividade saudavel)");
-    ui_card_row("Tempo Ligado (Uptime)", uptime_line, days >= 7 ? ANSI_AMBER : ANSI_GREEN, 82);
+    if (days >= 7) {
+        ui_warn("Tempo ligado: " ANSI_BOLD "%llud %lluh %llum" ANSI_RESET " sem reiniciar",
+                (unsigned long long)days, (unsigned long long)hours, (unsigned long long)mins);
+        ui_line(ANSI_DIM "Por que importa: o 'Inicio Rapido' do Windows acumula cache de drivers. Reiniciar limpa o kernel." ANSI_RESET);
+    } else {
+        ui_ok("Tempo ligado: " ANSI_BOLD "%llud %lluh %llum" ANSI_RESET,
+              (unsigned long long)days, (unsigned long long)hours, (unsigned long long)mins);
+    }
 
-    ui_card_end(82);
+    if (report->virt_firmware_enabled) {
+        ui_ok("Virtualizacao na BIOS (AMD-V / VT-x): " ANSI_BOLD "Ativa" ANSI_RESET);
+    } else {
+        ui_warn("Virtualizacao na BIOS (AMD-V / VT-x): " ANSI_BOLD "Desativada" ANSI_RESET);
+        ui_line(ANSI_DIM "Por que importa: sem ela, Docker, WSL2 e maquinas virtuais nao funcionam ou ficam muito lentos." ANSI_RESET);
+    }
 
-    printf("\n");
-    ui_print_diagnostic_item(
-        report->virt_firmware_enabled ? UI_STATUS_OK : UI_STATUS_WARN,
-        "Virtualizacao na BIOS",
-        report->virt_firmware_enabled ? "Ativa no Firmware (AMD-V / Intel VT-x)" : "DESATIVADA na BIOS",
-        "Permite que o processador execute instrucoes de virtualizacao assistida por hardware sem perda de desempenho.",
-        report->virt_firmware_enabled
-            ? "Sua BIOS ja esta pronta para rodar Docker, WSL2, Hyper-V e emuladores com aceleracao maxima."
-            : "Entre na BIOS ao ligar o PC e ative 'SVM Mode' (AMD) ou 'Intel Virtualization Technology'."
-    );
-
-    ui_print_diagnostic_item(
-        report->hags_enabled ? UI_STATUS_OK : UI_STATUS_INFO,
-        "Agendamento de GPU (HAGS)",
-        report->hags_enabled ? "Ativado (HwSchMode = 2)" : "Desativado ou Gerenciado pelo Driver",
-        "O Hardware-Accelerated GPU Scheduling permite que a placa de video gerencie sua propria memoria VRAM, reduzindo a sobrecarga da CPU.",
-        report->hags_enabled
-            ? "Ativo e otimizado para jogos modernos."
-            : "Se sua GPU suportar, voce pode ativar em Configuracoes do Windows -> Sistema -> Tela -> Elementos Graficos."
-    );
-
-    ui_print_diagnostic_item(
-        report->secure_boot_enabled ? UI_STATUS_OK : UI_STATUS_WARN,
-        "UEFI Secure Boot",
-        report->secure_boot_enabled ? "Ativo na BIOS" : "Inativo na BIOS (UEFISecureBootEnabled = 0)",
-        "Bloqueia a execucao de drivers ou bootloaders nao assinados durante a inicializacao e e exigido por anti-cheats modernos (Valorant/Vanguard, EA, Faceit).",
-        report->secure_boot_enabled
-            ? "Protecao de inicializacao UEFI ativa."
-            : "Para jogar titulos com anti-cheat de kernel ou aumentar a seguranca, ative o 'Secure Boot' na aba Boot/Security da sua BIOS."
-    );
-
-    ui_print_diagnostic_item(
-        report->avx2_supported ? UI_STATUS_OK : UI_STATUS_INFO,
-        "Instrucoes Vetoriais SIMD",
-        report->avx2_supported ? "AVX2 256-bit Suportado pelo Processador" : "SSE2 Padrao",
-        "Instrucoes AVX2 permitem que a CPU processe ate 8 numeros de 32-bits simultaneamente em um unico ciclo de clock.",
-        "Fundamental para alta performance em jogos modernos, fisica, compressao e compilacao."
-    );
+    if (report->secure_boot_enabled) {
+        ui_ok("UEFI Secure Boot: " ANSI_BOLD "Ativo" ANSI_RESET);
+    } else {
+        ui_warn("UEFI Secure Boot: " ANSI_BOLD "Inativo na BIOS" ANSI_RESET);
+        ui_line(ANSI_DIM "Por que importa: exigido por jogos com anti-cheat de kernel (Valorant/Vanguard, EA, Faceit)." ANSI_RESET);
+    }
 }
