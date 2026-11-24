@@ -355,7 +355,8 @@ int ui_select(const char *title, const char **labels, int count) {
     }
 
     printf("\n" ANSI_GREEN "◆" ANSI_RESET " " ANSI_BOLD "%s" ANSI_RESET
-           "  " ANSI_DIM "(Setas ↑/↓ e ENTER)" ANSI_RESET "\n");
+           "  " ANSI_DIM "(Setas ↑/↓ e ENTER)" ANSI_RESET "\n",
+           title);
     printf("  " ANSI_DIM "──────────────────────────────────────────────────────────────────────────" ANSI_RESET "\n");
 
     printf("\x1b[?25l");
