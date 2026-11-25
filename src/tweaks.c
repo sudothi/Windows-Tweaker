@@ -273,21 +273,28 @@ void tweaks_run_audit(tweaks_report_t *report) {
              "Impede o Windows de derrubar o clock do processador continuamente, evitando quedas de FPS.", 6);
 
     /* ========================================================================
-     * REGRA 2: COMPACTACAO DO ARQUIVO DE HIBERNACAO (hiberfil.sys)
-     * HiberFileType: 1 = Reduced (~20% RAM), 2 = Full (~40% RAM) ou HibernateEnabled == 0
+     * REGRA 2: CLOCK MINIMO DA CPU NA TOMADA (100% AC P-STATE SEM QUEDA)
+     * Chave: PowerSchemes\<GUID>\54533251-82be-4824-96c1-47b60b740d00\893dee8e-2bef-41e0-89c6-b55d0929964c
      * ======================================================================== */
-    DWORD hiber_enabled = 1, hiber_type = 2;
-    reg_read_dword(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Power", "HibernateEnabled", &hiber_enabled);
-    bool has_htype = reg_read_dword(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Power", "HiberFileType", &hiber_type);
-    bool hiber_opt = (hiber_enabled == 0) || (has_htype && hiber_type <= 1);
+    char min_cpu_key[256];
+    snprintf(min_cpu_key, sizeof(min_cpu_key),
+             "SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes\\%s\\54533251-82be-4824-96c1-47b60b740d00\\893dee8e-2bef-41e0-89c6-b55d0929964c",
+             report->power_plan_guid[0] ? report->power_plan_guid : "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
+    DWORD ac_min_cpu = 5;
+    bool has_ac_min = reg_read_dword(HKEY_LOCAL_MACHINE, min_cpu_key, "ACSettingIndex", &ac_min_cpu);
+    bool cpu_min_opt = report->is_high_performance && (!has_ac_min || ac_min_cpu == 100);
+
+    char cpu_min_curr[64];
+    snprintf(cpu_min_curr, sizeof(cpu_min_curr), "Minimo na tomada: %lu%%",
+             (unsigned long)(has_ac_min ? ac_min_cpu : (report->is_high_performance ? 100 : 5)));
 
     add_rule(report, TWEAK_PWR_HIBER_REDUCED, "ENERGIA & CPU",
-             "2. Espaco de Hibernacao (hiberfil.sys)",
-             hiber_opt,
-             hiber_opt ? "Compactado / Otimizado" : "Tamanho Total (Consome ~6 GB do SSD)",
-             "Modo Compacto Reduced (Libera ~3 GB no SSD)",
-             "powercfg /hibernate /type reduced (HKLM\\...\\Control\\Power\\HiberFileType)",
-             "Reduz pela metade o arquivo oculto C:\\hiberfil.sys no SSD sem perder o Inicio Rapido.", 3);
+             "2. Clock Minimo da CPU na Tomada (P-State)",
+             cpu_min_opt,
+             cpu_min_opt ? "100% na tomada (5% na bateria)" : cpu_min_curr,
+             "100% na tomada (Zero queda de clock)",
+             "powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN 100",
+             "Mantem o processador em 100% quando conectado na tomada, sem afetar a economia na bateria.", 4);
 
     /* ========================================================================
      * REGRA 3: GRAVACAO EM SEGUNDO PLANO XBOX GAMEDVR
@@ -507,17 +514,14 @@ bool tweaks_apply_single_rule(tweak_id_t id) {
             return false;
 
         case TWEAK_PWR_HIBER_REDUCED: {
-            int rc = system("powercfg /hibernate /type reduced >nul 2>nul");
+            tweaks_activate_high_performance_power();
+            int rc = system("powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN 100 >nul 2>nul");
+            system("powercfg /setactive SCHEME_CURRENT >nul 2>nul");
             if (rc == 0) {
-                ui_ok("2. Arquivo de hibernacao (hiberfil.sys) configurado para " ANSI_BOLD "Modo Compacto (Reduced)" ANSI_RESET);
+                ui_ok("2. Clock Minimo da CPU na tomada ajustado para " ANSI_BOLD "100%% (Zero Throttling)" ANSI_RESET);
                 return true;
             }
-            /* Fallback: grava HiberFileType = 1 se tiver permissao, ou informa que requer Admin */
-            if (reg_write_dword(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Power", "HiberFileType", 1)) {
-                ui_ok("2. HiberFileType ajustado para Modo Compacto (1)");
-                return true;
-            }
-            ui_warn("2. Para compactar o C:\\hiberfil.sys, abra o Windows Tweaker como Administrador.");
+            ui_warn("2. Nao foi possivel ajustar o estado minimo do processador.");
             return false;
         }
 
@@ -787,7 +791,8 @@ int tweaks_apply_pending_optimizations(const tweaks_report_t *current) {
 
 void tweaks_restore_windows_defaults(void) {
     system("powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e >nul 2>nul");
-    system("powercfg /hibernate /type full >nul 2>nul");
+    system("powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN 5 >nul 2>nul");
+    system("powercfg /setactive SCHEME_CURRENT >nul 2>nul");
     reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", "400");
     reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "HungAppTimeout", "5000");
     reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "WaitToKillAppTimeout", "20000");

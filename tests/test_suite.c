@@ -79,6 +79,22 @@ static int test_tweaks_audit(void) {
                 "Soma exata de regras otimizadas + pendentes == 12");
     ASSERT_TRUE(tw.startup_enabled_count + tw.startup_disabled_count == tw.startup_count,
                 "Sincronizacao StartupApproved\\Run (Habilitados + Desabilitados == Total)");
+
+    /* Testa a aplicacao real de todas as 12 regras e verifica se todas as 12 ficam JA OTIMIZADO */
+    for (int i = 0; i < MAX_TWEAK_RULES; i++) {
+        bool ok = tweaks_apply_single_rule((tweak_id_t)i);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Execucao da Regra #%d (%s)", i + 1, tw.rules[i].title);
+        ASSERT_TRUE(ok, msg);
+    }
+
+    ASSERT_TRUE(tweaks_flush_dns_cache(), "Execucao de limpeza de cache DNS (ipconfig /flushdns)");
+
+    tweaks_report_t tw_after;
+    tweaks_run_audit(&tw_after);
+    ASSERT_TRUE(tw_after.optimized_tweaks_count == MAX_TWEAK_RULES && tw_after.pending_tweaks_count == 0,
+                "Confirmacao no Registro: 12/12 regras detectadas como JA OTIMIZADO (0 pendentes)");
+
     return 0;
 }
 
