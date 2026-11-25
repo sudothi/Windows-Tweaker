@@ -300,24 +300,60 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
     }
 }
 
-/* Tela de Otimizacao do Windows: Primeiro analisa e mostra, depois pede permissao para aplicar */
+/* Tela de Otimizacao do Windows: So oferece aplicar o que estiver realmente PENDENTE */
 static void interactive_optimize_screen(void) {
     ui_clear();
     ui_banner();
-    tweaks_apply_safe_optimizations(true);
 
-    printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Analise concluida. Nenhuma chave do Registro foi alterada ainda." ANSI_RESET "\n");
+    tweaks_report_t current;
+    int pending = tweaks_inspect_optimizations(&current);
+
+    if (pending == 0) {
+        ui_ok(ANSI_BOLD "Tudo otimizado!" ANSI_RESET " Todos os 4 ajustes acima ja estao ativos no seu Windows (nada pendente).");
+
+        const char *done_labels[] = {
+            "Voltar ao Menu Principal",
+            "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)"
+        };
+        int sel = ui_select("NENHUMA OTIMIZACAO PENDENTE", done_labels, 2);
+        if (sel == 1) {
+            if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao lento de fabrica?",
+                                  "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
+                printf("\n");
+                tweaks_restore_windows_defaults();
+                ui_pause_enter("Voltar ao Menu Principal");
+            }
+        }
+        return;
+    }
+
+    printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Encontrados %d ajuste(s) pendente(s). Os itens que ja estao 'JA OTIMIZADO' nao serao tocados." ANSI_RESET "\n",
+           pending);
+
+    char apply_btn[128];
+    snprintf(apply_btn, sizeof(apply_btn),
+             "Autorizar e aplicar apenas o(s) %d ajuste(s) pendente(s) agora", pending);
 
     const char *opt_labels[] = {
-        "Autorizar e aplicar as 2 otimizacoes no Registro agora",
-        "Sair e voltar ao Menu Principal sem alterar nada"
+        apply_btn,
+        "Sair e voltar ao Menu Principal sem alterar nada",
+        "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)"
     };
 
-    int sel = ui_select("DESEJA APLICAR ESTES AJUSTES?", opt_labels, 2);
+    int sel = ui_select("DESEJA APLICAR OS AJUSTES PENDENTES?", opt_labels, 3);
     if (sel == 0) {
         printf("\n");
-        tweaks_apply_safe_optimizations(false);
+        int applied = tweaks_apply_pending_optimizations(&current);
+        printf("\n");
+        ui_ok(ANSI_BOLD "%d ajuste(s) pendente(s) aplicado(s) com sucesso!" ANSI_RESET, applied);
         ui_pause_enter("Voltar ao Menu Principal");
+    } else if (sel == 2) {
+        if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao de fabrica?",
+                              "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
+            printf("\n");
+            tweaks_restore_windows_defaults();
+            ui_pause_enter("Voltar ao Menu Principal");
+        }
     }
 }
 
@@ -552,10 +588,16 @@ static int dispatch_command(int argc, char *argv[]) {
 
     if (strcmp(cmd, "otimizar") == 0 || strcmp(cmd, "optimize") == 0) {
         bool dry = !apply_mode;
-        tweaks_apply_safe_optimizations(dry);
-        if (dry) {
+        tweaks_report_t current;
+        int pending = tweaks_inspect_optimizations(&current);
+        if (pending == 0) {
+            ui_ok("Todos os ajustes ja estao otimizados no seu PC (0 pendentes).");
+        } else if (dry) {
             printf("\n");
-            ui_info("(dry-run: rode 'windows-tweaker otimizar --apply' ou use o menu interativo para aplicar)");
+            ui_info("(dry-run: %d ajuste(s) pendente(s). Rode 'windows-tweaker otimizar --apply' para aplicar)", pending);
+        } else {
+            printf("\n");
+            tweaks_apply_pending_optimizations(&current);
         }
         return 0;
     }

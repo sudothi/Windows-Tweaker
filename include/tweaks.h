@@ -31,22 +31,31 @@ typedef struct {
     int             menu_show_delay_ms;
     uint32_t        system_responsiveness_pct;
     bool            transparency_enabled;
+    bool            explorer_ads_enabled; /* ShowSyncProviderNotifications */
 
-    /* Computed actionable issues */
-    int             issues_detected;
+    /* Contadores separados para nao confundir o usuario */
+    int             pending_tweaks_count; /* Quantos ajustes automaticos ainda NAO estao otimizados */
+    int             issues_detected;      /* Total geral (incluindo excesso de apps no boot) */
     double          audit_elapsed_ms;
 } tweaks_report_t;
 
-/* Audit Windows Registry, power scheme, SSD TRIM, and gaming responsiveness */
+/* Audita Registro, plano de energia, TRIM do SSD e responsividade */
 void tweaks_run_audit(tweaks_report_t *report);
 
-/* Print formatted OS & Registry diagnostic report */
+/* Imprime relatorio de sistema no Diagnostico Completo */
 void tweaks_print_report(const tweaks_report_t *report);
 
-/* Print detailed startup applications table */
+/* Imprime lista de programas na inicializacao (Boot) */
 void tweaks_print_startup(const tweaks_report_t *report);
 
-/* Apply safe user-level responsiveness & gaming optimizations (supports --dry-run) */
-int tweaks_apply_safe_optimizations(bool dry_run);
+/* Inspeciona os ajustes de desempenho separando o que esta PENDENTE do que JA ESTA OTIMIZADO.
+ * Retorna a quantidade de ajustes que ainda estao PENDENTES. */
+int  tweaks_inspect_optimizations(tweaks_report_t *out_current);
+
+/* Aplica apenas os ajustes que ainda estao pendentes (nao reexecuta o que ja esta otimizado) */
+int  tweaks_apply_pending_optimizations(const tweaks_report_t *current);
+
+/* Restaura os valores padrao originais do Windows caso o usuario queira desfazer */
+void tweaks_restore_windows_defaults(void);
 
 #endif /* WT_TWEAKS_H */

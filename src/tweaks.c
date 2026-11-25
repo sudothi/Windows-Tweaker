@@ -104,6 +104,7 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->issues_detected++;
     }
 
+    /* 1. Power Plan */
     ui_spinner_update(2, "Conferindo plano de energia da CPU...");
     if (reg_read_string(HKEY_LOCAL_MACHINE,
                         "SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes",
@@ -118,17 +119,21 @@ void tweaks_run_audit(tweaks_report_t *report) {
         } else if (_stricmp(report->power_plan_guid, "a1841308-3541-4fab-bc81-f71556f20b4a") == 0) {
             strncpy(report->power_plan_name, "Economia de Energia", sizeof(report->power_plan_name) - 1);
             report->is_high_performance = false;
+            report->pending_tweaks_count++;
             report->issues_detected++;
         } else {
             strncpy(report->power_plan_name, "Equilibrado (Padrao)", sizeof(report->power_plan_name) - 1);
             report->is_high_performance = false;
+            report->pending_tweaks_count++;
             report->issues_detected++;
         }
     } else {
         strncpy(report->power_plan_name, "Equilibrado (Padrao)", sizeof(report->power_plan_name) - 1);
         report->is_high_performance = false;
+        report->pending_tweaks_count++;
     }
 
+    /* 2. SSD TRIM */
     ui_spinner_update(4, "Verificando TRIM do SSD e agendador de jogos...");
     DWORD disable_trim = 0;
     if (reg_read_dword(HKEY_LOCAL_MACHINE,
@@ -142,28 +147,39 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->issues_detected++;
     }
 
-    DWORD disable_last_access = 0;
-    if (reg_read_dword(HKEY_LOCAL_MACHINE,
-                       "SYSTEM\\CurrentControlSet\\Control\\FileSystem",
-                       "NtfsDisableLastAccessUpdate", &disable_last_access)) {
-        report->ntfs_last_access_disabled = (disable_last_access != 0);
-    }
-
+    /* 3. Xbox GameDVR */
     DWORD dvr_enabled = 0, app_capture = 0;
     bool has_dvr = reg_read_dword(HKEY_CURRENT_USER, "System\\GameConfigStore", "GameDVR_Enabled", &dvr_enabled);
     bool has_cap = reg_read_dword(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR", "AppCaptureEnabled", &app_capture);
     report->game_dvr_enabled = (has_dvr && dvr_enabled != 0) || (has_cap && app_capture != 0);
     if (report->game_dvr_enabled) {
+        report->pending_tweaks_count++;
         report->issues_detected++;
     }
 
+    /* 4. MenuShowDelay */
     char delay_str[32] = {0};
     if (reg_read_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", delay_str, sizeof(delay_str))) {
         report->menu_show_delay_ms = atoi(delay_str);
     } else {
         report->menu_show_delay_ms = 400;
     }
-    if (report->menu_show_delay_ms > 100) {
+    if (report->menu_show_delay_ms > 50) {
+        report->pending_tweaks_count++;
+        report->issues_detected++;
+    }
+
+    /* 5. Sugestoes/Anuncios no Windows Explorer (ShowSyncProviderNotifications) */
+    DWORD sync_ads = 1;
+    if (reg_read_dword(HKEY_CURRENT_USER,
+                       "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                       "ShowSyncProviderNotifications", &sync_ads)) {
+        report->explorer_ads_enabled = (sync_ads != 0);
+    } else {
+        report->explorer_ads_enabled = true;
+    }
+    if (report->explorer_ads_enabled) {
+        report->pending_tweaks_count++;
         report->issues_detected++;
     }
 
@@ -176,21 +192,19 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->system_responsiveness_pct = 20;
     }
 
-    DWORD transp = 1;
-    if (reg_read_dword(HKEY_CURRENT_USER,
-                       "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                       "EnableTransparency", &transp)) {
-        report->transparency_enabled = (transp != 0);
-    } else {
-        report->transparency_enabled = true;
-    }
-
     QueryPerformanceCounter(&t_end);
     report->audit_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
     char summary[160];
-    snprintf(summary, sizeof(summary), "Configuracoes do Windows analisadas (%d programas no boot, %d ajustes recomendados)",
-             report->startup_count, report->issues_detected);
+    if (report->pending_tweaks_count == 0) {
+        snprintf(summary, sizeof(summary),
+                 "Configuracoes verificadas: todos os ajustes ja estao otimizados! (%d programas no boot)",
+                 report->startup_count);
+    } else {
+        snprintf(summary, sizeof(summary),
+                 "Configuracoes verificadas: %d ajuste(s) pendente(s) para otimizar (%d programas no boot)",
+                 report->pending_tweaks_count, report->startup_count);
+    }
     ui_spinner_stop(summary, true);
 }
 
@@ -198,17 +212,17 @@ void tweaks_print_report(const tweaks_report_t *report) {
     ui_item_block(
         report->is_high_performance,
         "Plano de Energia da CPU",
-        report->power_plan_name,
-        "Define se o Windows mantem o processador na velocidade maxima ou reduz o clock para economizar bateria.",
+        report->is_high_performance ? "JA OTIMIZADO (Alto Desempenho)" : "PENDENTE (Modo Equilibrado)",
+        "Define se o Windows mantem o processador na velocidade maxima ou reduz o clock.",
         report->is_high_performance
-            ? "Processador operando sem limitacao de clock."
-            : "Mude para 'Alto Desempenho' nas Opcoes de Energia do Windows quando for jogar."
+            ? "Processador operando na frequencia maxima sem oscilacoes."
+            : "Pode ser ativado automaticamente na tela '3. Otimizar Windows e Jogos'."
     );
 
     ui_item_block(
         report->ntfs_trim_enabled,
         "Comando TRIM do SSD",
-        report->ntfs_trim_enabled ? "Ativado (Ideal)" : "Desativado (Critico)",
+        report->ntfs_trim_enabled ? "JA OTIMIZADO (Ativado)" : "PENDENTE (Desativado)",
         "Recurso que avisa o SSD quais blocos foram apagados para manter a velocidade de gravacao.",
         report->ntfs_trim_enabled
             ? "Seu SSD esta com a manutencao automatica de blocos ativa."
@@ -218,17 +232,19 @@ void tweaks_print_report(const tweaks_report_t *report) {
     ui_item_block(
         !report->game_dvr_enabled,
         "Gravacao Xbox GameDVR",
-        report->game_dvr_enabled ? "Ativa em segundo plano (Reduz FPS)" : "Desativada (Otimizado)",
+        !report->game_dvr_enabled ? "JA OTIMIZADO (Desativado)" : "PENDENTE (Ativo em 2o plano)",
         "Recurso do Xbox Game Bar que grava a tela continuamente na memoria da placa de video.",
-        report->game_dvr_enabled
-            ? "Abra o menu 'Otimizar Windows e Jogos' e aperte Enter para desativar."
-            : "Desativado. Sua placa de video fica 100% livre para os jogos."
+        !report->game_dvr_enabled
+            ? "Ja esta desativado. Sua placa de video fica 100% livre para os jogos."
+            : "Pode ser desativado na tela '3. Otimizar Windows e Jogos'."
     );
 
     char delay_val[64];
-    snprintf(delay_val, sizeof(delay_val), "%d ms (%s)",
-             report->menu_show_delay_ms,
-             report->menu_show_delay_ms <= 50 ? "Instantaneo" : "Padrao lento do Windows");
+    if (report->menu_show_delay_ms <= 50) {
+        snprintf(delay_val, sizeof(delay_val), "JA OTIMIZADO (%d ms - Instantaneo)", report->menu_show_delay_ms);
+    } else {
+        snprintf(delay_val, sizeof(delay_val), "PENDENTE (%d ms - Padrao lento)", report->menu_show_delay_ms);
+    }
 
     ui_item_block(
         report->menu_show_delay_ms <= 50,
@@ -236,8 +252,8 @@ void tweaks_print_report(const tweaks_report_t *report) {
         delay_val,
         "Tempo que o Windows espera antes de desenhar um menu quando voce clica ou passa o mouse.",
         report->menu_show_delay_ms <= 50
-            ? "Menus configurados para resposta imediata."
-            : "Abra o menu 'Otimizar Windows e Jogos' e aperte Enter para baixar de 400ms para 20ms."
+            ? "Ja esta aplicado no seu PC (resposta imediata)."
+            : "Pode ser reduzido para 20ms na tela '3. Otimizar Windows e Jogos'."
     );
 
     char boot_val[64];
@@ -250,7 +266,7 @@ void tweaks_print_report(const tweaks_report_t *report) {
         "Aplicativos que iniciam automaticamente junto com o Windows e ficam consumindo memoria RAM.",
         report->startup_count <= 6
             ? "Quantidade enxuta de programas iniciando no boot."
-            : "Abra 'Programas na Inicializacao (Boot)' no menu para ver a lista completa dos 18 apps."
+            : "Veja quais sao na opcao '4. Programas na Inicializacao (Boot)'."
     );
 }
 
@@ -278,56 +294,122 @@ void tweaks_print_startup(const tweaks_report_t *report) {
     ui_info("Como desativar algum deles: aperte Ctrl + Shift + Esc (Gerenciador de Tarefas) -> aba 'Aplicativos de Inicializacao'.");
 }
 
-int tweaks_apply_safe_optimizations(bool dry_run) {
+int tweaks_inspect_optimizations(tweaks_report_t *out_current) {
+    tweaks_run_audit(out_current);
+
+    ui_header_box("ANALISE DOS 4 AJUSTES DE DESEMPENHO DO WINDOWS",
+                  "O sistema verifica o que ja esta otimizado e mostra apenas o que falta aplicar.");
+
+    /* 1. Plano de Energia */
+    ui_item_block(
+        out_current->is_high_performance,
+        "1. Plano de Energia da CPU",
+        out_current->is_high_performance
+            ? "JA OTIMIZADO (Alto Desempenho ativo)"
+            : "PENDENTE: Atual 'Equilibrado'  -->  Mudar para 'Alto Desempenho'",
+        "Comando nativo: powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+        out_current->is_high_performance
+            ? "Ja esta otimizado. Nao precisa rodar novamente."
+            : "Evita que o Windows derrube o clock do processador durante jogos e tarefas pesadas."
+    );
+
+    /* 2. Velocidade dos Menus */
+    char menu_state[96];
+    if (out_current->menu_show_delay_ms <= 50) {
+        snprintf(menu_state, sizeof(menu_state), "JA OTIMIZADO (Atual: %d ms - Instantaneo)", out_current->menu_show_delay_ms);
+    } else {
+        snprintf(menu_state, sizeof(menu_state), "PENDENTE: Atual %d ms  -->  Mudar para 20 ms", out_current->menu_show_delay_ms);
+    }
+    ui_item_block(
+        out_current->menu_show_delay_ms <= 50,
+        "2. Velocidade dos Menus",
+        menu_state,
+        "Chave: HKEY_CURRENT_USER\\Control Panel\\Desktop\\MenuShowDelay",
+        out_current->menu_show_delay_ms <= 50
+            ? "Ja esta otimizado no seu PC. Nao precisa rodar novamente."
+            : "Tira o atraso de quase meio segundo ao abrir menus do botao direito e do Explorer."
+    );
+
+    /* 3. Gravacao Xbox GameDVR */
+    ui_item_block(
+        !out_current->game_dvr_enabled,
+        "3. Gravacao Xbox GameDVR",
+        !out_current->game_dvr_enabled
+            ? "JA OTIMIZADO (Gravacao de fundo Desativada)"
+            : "PENDENTE: Atual Ativo (1)  -->  Mudar para Desativado (0)",
+        "Chave: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+        !out_current->game_dvr_enabled
+            ? "Ja esta otimizado no seu PC. Nao precisa rodar novamente."
+            : "Desliga a gravacao oculta de tela na GPU para evitar quedas de FPS e input lag."
+    );
+
+    /* 4. Anuncios / Sugestoes de Sincronizacao no Explorer */
+    ui_item_block(
+        !out_current->explorer_ads_enabled,
+        "4. Anuncios no Explorer",
+        !out_current->explorer_ads_enabled
+            ? "JA OTIMIZADO (Propagandas do Explorer Desativadas)"
+            : "PENDENTE: Atual Ativo (1)  -->  Mudar para Desativado (0)",
+        "Chave: HKCU\\...\\Explorer\\Advanced\\ShowSyncProviderNotifications",
+        !out_current->explorer_ads_enabled
+            ? "Ja esta otimizado no seu PC. Nao precisa rodar novamente."
+            : "Remove banners promocionais e avisos de sincronizacao dentro das pastas do Windows Explorer."
+    );
+
+    return out_current->pending_tweaks_count;
+}
+
+int tweaks_apply_pending_optimizations(const tweaks_report_t *current) {
     int applied = 0;
 
-    if (dry_run) {
-        tweaks_report_t current;
-        tweaks_run_audit(&current);
-
-        ui_header_box("AJUSTES DE DESEMPENHO DISPONIVEIS PARA O SEU WINDOWS",
-                      "Estes ajustes alteram apenas configuracoes visuais e de jogos do seu usuario (100% seguro).");
-
-        char menu_curr[64];
-        snprintf(menu_curr, sizeof(menu_curr), "Atual: %d ms  -->  Vai ficar: 20 ms (Instantaneo)", current.menu_show_delay_ms);
-        ui_item_block(
-            current.menu_show_delay_ms <= 50,
-            "1. Velocidade dos Menus",
-            menu_curr,
-            "Chave: HKEY_CURRENT_USER\\Control Panel\\Desktop\\MenuShowDelay",
-            "Tira o atraso de quase meio segundo ao abrir menus do botao direito e do Explorer."
-        );
-
-        ui_item_block(
-            !current.game_dvr_enabled,
-            "2. Gravacao Xbox GameDVR",
-            current.game_dvr_enabled ? "Atual: Ativo (1)  -->  Vai ficar: Desativado (0)" : "Atual: Ja esta Desativado (0)",
-            "Chave: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
-            "Desliga a gravacao oculta de tela na GPU para evitar quedas de FPS e input lag em jogos."
-        );
-
-        return 2;
+    /* So executa o que realmente estiver PENDENTE */
+    if (!current->is_high_performance) {
+        int rc = system("powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c >nul 2>nul");
+        if (rc == 0) {
+            ui_ok("Plano de Energia alterado para " ANSI_BOLD "Alto Desempenho" ANSI_RESET);
+            applied++;
+        } else {
+            ui_warn("Nao foi possivel ativar o plano Alto Desempenho via powercfg.");
+        }
     }
 
-    if (reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", "20")) {
-        ui_ok("Velocidade dos Menus ajustada para " ANSI_BOLD "20 ms" ANSI_RESET " (Instantaneo)");
-        applied++;
-    } else {
-        ui_fail("Nao foi possivel gravar MenuShowDelay");
+    if (current->menu_show_delay_ms > 50) {
+        if (reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", "20")) {
+            ui_ok("Velocidade dos Menus ajustada para " ANSI_BOLD "20 ms" ANSI_RESET);
+            applied++;
+        }
     }
 
-    bool ok1 = reg_write_dword(HKEY_CURRENT_USER,
-                               "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
-                               "AppCaptureEnabled", 0);
-    bool ok2 = reg_write_dword(HKEY_CURRENT_USER,
-                               "System\\GameConfigStore",
-                               "GameDVR_Enabled", 0);
-    if (ok1 || ok2) {
-        ui_ok("Gravacao em segundo plano do " ANSI_BOLD "Xbox GameDVR desativada" ANSI_RESET);
-        applied++;
-    } else {
-        ui_fail("Nao foi possivel atualizar as chaves do GameDVR");
+    if (current->game_dvr_enabled) {
+        bool ok1 = reg_write_dword(HKEY_CURRENT_USER,
+                                   "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+                                   "AppCaptureEnabled", 0);
+        bool ok2 = reg_write_dword(HKEY_CURRENT_USER,
+                                   "System\\GameConfigStore",
+                                   "GameDVR_Enabled", 0);
+        if (ok1 || ok2) {
+            ui_ok("Gravacao em segundo plano do " ANSI_BOLD "Xbox GameDVR desativada" ANSI_RESET);
+            applied++;
+        }
+    }
+
+    if (current->explorer_ads_enabled) {
+        if (reg_write_dword(HKEY_CURRENT_USER,
+                            "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                            "ShowSyncProviderNotifications", 0)) {
+            ui_ok("Anuncios e notificacoes promocionais do " ANSI_BOLD "Windows Explorer desativados" ANSI_RESET);
+            applied++;
+        }
     }
 
     return applied;
+}
+
+void tweaks_restore_windows_defaults(void) {
+    system("powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e >nul 2>nul");
+    reg_write_string(HKEY_CURRENT_USER, "Control Panel\\Desktop", "MenuShowDelay", "400");
+    reg_write_dword(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR", "AppCaptureEnabled", 1);
+    reg_write_dword(HKEY_CURRENT_USER, "System\\GameConfigStore", "GameDVR_Enabled", 1);
+    reg_write_dword(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "ShowSyncProviderNotifications", 1);
+    ui_info("Configuracoes restauradas para os valores padrao de fabrica do Windows.");
 }
