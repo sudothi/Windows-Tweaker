@@ -54,7 +54,42 @@ static bool reg_write_string(HKEY root, const char *subkey, const char *value_na
     return (res == ERROR_SUCCESS);
 }
 
-static void enumerate_startup_key(HKEY root, const char *subkey, const char *source_label, tweaks_report_t *report) {
+/* Verifica na chave StartupApproved\Run (usada pelo Gerenciador de Tarefas do Windows)
+ * se um item de inicializacao esta HABILITADO (true) ou DESABILITADO (false).
+ * No Windows 10/11:
+ *   byte[0] == 0x02 (ou par) -> Habilitado
+ *   byte[0] == 0x03 (ou impar: bit 0 == 1) -> Desabilitado pelo usuario no Task Manager
+ */
+static bool is_startup_entry_enabled(HKEY root, const char *value_name) {
+    const char *approved_keys[] = {
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run",
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run32"
+    };
+
+    for (int k = 0; k < 2; k++) {
+        HKEY hKey;
+        if (RegOpenKeyExA(root, approved_keys[k], 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            BYTE buf[32] = {0};
+            DWORD buf_size = sizeof(buf);
+            DWORD type = 0;
+            LONG res = RegQueryValueExA(hKey, value_name, NULL, &type, buf, &buf_size);
+            RegCloseKey(hKey);
+
+            if (res == ERROR_SUCCESS && type == REG_BINARY && buf_size >= 4) {
+                /* Se o bit 0 do primeiro byte estiver ligado (ex: 0x03, 0x01, 0x07), esta DESABILITADO */
+                if ((buf[0] & 0x01) != 0) {
+                    return false;
+                }
+                return true;
+            }
+        }
+    }
+
+    /* Se nao houver registro em StartupApproved, por padrao o Windows considera Habilitado */
+    return true;
+}
+
+static void enumerate_startup_key(HKEY root, const char *subkey, const char *source_label, bool is_hkcu, tweaks_report_t *report) {
     HKEY hKey;
     if (RegOpenKeyExA(root, subkey, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
         return;
@@ -78,10 +113,73 @@ static void enumerate_startup_key(HKEY root, const char *subkey, const char *sou
             strncpy(entry->name, value_name, sizeof(entry->name) - 1);
             strncpy(entry->command, (const char *)value_data, sizeof(entry->command) - 1);
             strncpy(entry->source, source_label, sizeof(entry->source) - 1);
+            entry->is_hkcu = is_hkcu;
+            entry->enabled = is_startup_entry_enabled(root, value_name);
+
+            if (entry->enabled) {
+                report->startup_enabled_count++;
+            } else {
+                report->startup_disabled_count++;
+            }
         }
     }
 
     RegCloseKey(hKey);
+}
+
+bool tweaks_toggle_startup_entry(startup_entry_t *entry, bool new_enabled_state) {
+    HKEY root = entry->is_hkcu ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
+    const char *subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+
+    HKEY hKey;
+    if (RegCreateKeyExA(root, subkey, 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    BYTE data[12];
+    memset(data, 0, sizeof(data));
+
+    if (new_enabled_state) {
+        /* 02 00 00 00 00 00 00 00 00 00 00 00 = Habilitado no Task Manager */
+        data[0] = 0x02;
+    } else {
+        /* 03 00 00 00 + FILETIME atual de 8 bytes = Desabilitado no Task Manager */
+        data[0] = 0x03;
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        memcpy(data + 4, &ft, sizeof(FILETIME));
+    }
+
+    LONG res = RegSetValueExA(hKey, entry->name, 0, REG_BINARY, data, sizeof(data));
+    RegCloseKey(hKey);
+
+    if (res == ERROR_SUCCESS) {
+        entry->enabled = new_enabled_state;
+        return true;
+    }
+    return false;
+}
+
+bool tweaks_activate_high_performance_power(void) {
+    /* Tenta ativar o esquema Alto Desempenho padrao (8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c) */
+    int rc = system("powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c >nul 2>nul");
+    if (rc != 0) {
+        /* Em alguns notebooks Modern Standby, duplica o template oficial primeiro e depois ativa */
+        system("powercfg /duplicatescheme 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c >nul 2>nul");
+        rc = system("powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c >nul 2>nul");
+    }
+
+    char active_guid[64] = {0};
+    if (reg_read_string(HKEY_LOCAL_MACHINE,
+                        "SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes",
+                        "ActivePowerScheme",
+                        active_guid, sizeof(active_guid))) {
+        if (_stricmp(active_guid, "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") == 0 ||
+            _stricmp(active_guid, "e9a42b02-d5df-448d-aa00-03f14749eb61") == 0) {
+            return true;
+        }
+    }
+    return (rc == 0);
 }
 
 void tweaks_run_audit(tweaks_report_t *report) {
@@ -91,16 +189,17 @@ void tweaks_run_audit(tweaks_report_t *report) {
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t_start);
 
-    ui_spinner_update(0, "Lendo chaves de inicializacao e Registro do Windows...");
+    ui_spinner_update(0, "Lendo status real de inicializacao (StartupApproved\\Run)...");
 
     enumerate_startup_key(HKEY_CURRENT_USER,
                           "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                          "HKCU\\Run", report);
+                          "HKCU\\Run", true, report);
     enumerate_startup_key(HKEY_LOCAL_MACHINE,
                           "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                          "HKLM\\Run", report);
+                          "HKLM\\Run", false, report);
 
-    if (report->startup_count > 6) {
+    /* So considera problema se houver mais de 6 programas REALMENTE HABILITADOS */
+    if (report->startup_enabled_count > 6) {
         report->issues_detected++;
     }
 
@@ -169,7 +268,7 @@ void tweaks_run_audit(tweaks_report_t *report) {
         report->issues_detected++;
     }
 
-    /* 5. Sugestoes/Anuncios no Windows Explorer (ShowSyncProviderNotifications) */
+    /* 5. Sugestoes/Anuncios no Windows Explorer */
     DWORD sync_ads = 1;
     if (reg_read_dword(HKEY_CURRENT_USER,
                        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
@@ -196,15 +295,9 @@ void tweaks_run_audit(tweaks_report_t *report) {
     report->audit_elapsed_ms = (double)(t_end.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
 
     char summary[160];
-    if (report->pending_tweaks_count == 0) {
-        snprintf(summary, sizeof(summary),
-                 "Configuracoes verificadas: todos os ajustes ja estao otimizados! (%d programas no boot)",
-                 report->startup_count);
-    } else {
-        snprintf(summary, sizeof(summary),
-                 "Configuracoes verificadas: %d ajuste(s) pendente(s) para otimizar (%d programas no boot)",
-                 report->pending_tweaks_count, report->startup_count);
-    }
+    snprintf(summary, sizeof(summary),
+             "Windows verificado: %d ajuste(s) pendente(s) · Boot: %d habilitados (%d ja desabilitados por voce)",
+             report->pending_tweaks_count, report->startup_enabled_count, report->startup_disabled_count);
     ui_spinner_stop(summary, true);
 }
 
@@ -216,7 +309,7 @@ void tweaks_print_report(const tweaks_report_t *report) {
         "Define se o Windows mantem o processador na velocidade maxima ou reduz o clock.",
         report->is_high_performance
             ? "Processador operando na frequencia maxima sem oscilacoes."
-            : "Pode ser ativado automaticamente na tela '3. Otimizar Windows e Jogos'."
+            : "Escolha 'Mudar Plano de Energia para Alto Desempenho' no menu abaixo para corrigir agora."
     );
 
     ui_item_block(
@@ -256,49 +349,71 @@ void tweaks_print_report(const tweaks_report_t *report) {
             : "Pode ser reduzido para 20ms na tela '3. Otimizar Windows e Jogos'."
     );
 
-    char boot_val[64];
-    snprintf(boot_val, sizeof(boot_val), "%d programas abrindo sozinhos", report->startup_count);
+    char boot_val[96];
+    snprintf(boot_val, sizeof(boot_val), "%d Habilitados abrindo no boot (%d ja Desabilitados por voce)",
+             report->startup_enabled_count, report->startup_disabled_count);
 
     ui_item_block(
-        report->startup_count <= 6,
+        report->startup_enabled_count <= 6,
         "Programas no Boot",
         boot_val,
-        "Aplicativos que iniciam automaticamente junto com o Windows e ficam consumindo memoria RAM.",
-        report->startup_count <= 6
-            ? "Quantidade enxuta de programas iniciando no boot."
-            : "Veja quais sao na opcao '4. Programas na Inicializacao (Boot)'."
+        "Lido de StartupApproved\\Run (mesma tabela da aba Inicializar do Gerenciador de Tarefas).",
+        report->startup_enabled_count <= 6
+            ? "Quantidade enxuta! A maioria dos programas ja foi desabilitada por voce."
+            : "Abra 'Programas na Inicializacao (Boot)' para desabilitar os que nao precisa."
     );
 }
 
 void tweaks_print_startup(const tweaks_report_t *report) {
-    ui_header_box("PROGRAMAS QUE INICIAM SOZINHOS COM O SEU WINDOWS",
-                  "Quanto mais programas abaixo, mais demorado fica ligar o PC e mais memoria RAM e gasta.");
+    ui_header_box("APLICATIVOS DE INICIALIZACAO (SINCRONIZADO COM O GERENCIADOR DE TAREFAS)",
+                  "Mostra exatamente quais programas estao HABILITADOS e quais voce ja deixou DESABILITADOS.");
 
     if (report->startup_count == 0) {
-        ui_ok("Nenhum programa configurado para iniciar junto com o Windows.");
+        ui_ok("Nenhum programa configurado na inicializacao do Windows.");
         return;
     }
 
+    printf("  " ANSI_GREEN "·" ANSI_RESET " Resumo real: " ANSI_YELLOW ANSI_BOLD "%d Habilitados" ANSI_RESET
+           " (abrindo com o PC)  |  " ANSI_DIM "%d Desabilitados (nao abrem com o PC)" ANSI_RESET "\n\n",
+           report->startup_enabled_count, report->startup_disabled_count);
+
+    /* Primeiro lista os HABILITADOS (que realmente abrem com o PC) */
+    printf("  " ANSI_YELLOW ANSI_BOLD "1. REALMENTE HABILITADOS (Abrem sozinhos quando voce liga o PC):" ANSI_RESET "\n");
+    int shown_en = 0;
     for (int i = 0; i < report->startup_count; i++) {
         const startup_entry_t *e = &report->startup_apps[i];
-        const char *origem_explicada = (strncmp(e->source, "HKLM", 4) == 0)
-            ? "Sistema (Todos os usuarios)"
-            : "Seu Usuario Atual";
-
-        printf("  " ANSI_YELLOW "%2d." ANSI_RESET " " ANSI_BOLD "%-28s" ANSI_RESET
-               " " ANSI_DIM "[%s]" ANSI_RESET "\n",
-               i + 1, e->name, origem_explicada);
-        printf("      " ANSI_DIM "╰─ Executavel: %s" ANSI_RESET "\n\n", e->command);
+        if (!e->enabled) continue;
+        shown_en++;
+        printf("    " ANSI_GREEN "●" ANSI_RESET " " ANSI_BOLD "%-28s" ANSI_RESET
+               " " ANSI_GREEN "[HABILITADO]" ANSI_RESET " " ANSI_DIM "(%s)" ANSI_RESET "\n",
+               e->name, e->is_hkcu ? "Seu Usuario" : "Sistema HKLM");
+        printf("      " ANSI_DIM "╰─ %s" ANSI_RESET "\n", e->command);
+    }
+    if (shown_en == 0) {
+        printf("    " ANSI_DIM "Nenhum programa habilitado." ANSI_RESET "\n");
     }
 
-    ui_info("Como desativar algum deles: aperte Ctrl + Shift + Esc (Gerenciador de Tarefas) -> aba 'Aplicativos de Inicializacao'.");
+    /* Depois lista os que ja estao DESABILITADOS no Gerenciador de Tarefas */
+    printf("\n  " ANSI_DIM "2. JA DESABILITADOS POR VOCE (Nao abrem junto com o PC):" ANSI_RESET "\n");
+    int shown_dis = 0;
+    for (int i = 0; i < report->startup_count; i++) {
+        const startup_entry_t *e = &report->startup_apps[i];
+        if (e->enabled) continue;
+        shown_dis++;
+        printf("    " ANSI_DIM "○ %-28s [DESABILITADO] (%s)" ANSI_RESET "\n",
+               e->name, e->is_hkcu ? "Seu Usuario" : "Sistema HKLM");
+    }
+    if (shown_dis == 0) {
+        printf("    " ANSI_DIM "Nenhum programa desabilitado." ANSI_RESET "\n");
+    }
+    printf("\n");
 }
 
 int tweaks_inspect_optimizations(tweaks_report_t *out_current) {
     tweaks_run_audit(out_current);
 
     ui_header_box("ANALISE DOS 4 AJUSTES DE DESEMPENHO DO WINDOWS",
-                  "O sistema verifica o que ja esta otimizado e mostra apenas o que falta aplicar.");
+                  "Itens marcados como 'JA OTIMIZADO' sao ignorados. Apenas os 'PENDENTE' precisam ser aplicados.");
 
     /* 1. Plano de Energia */
     ui_item_block(
@@ -362,10 +477,8 @@ int tweaks_inspect_optimizations(tweaks_report_t *out_current) {
 int tweaks_apply_pending_optimizations(const tweaks_report_t *current) {
     int applied = 0;
 
-    /* So executa o que realmente estiver PENDENTE */
     if (!current->is_high_performance) {
-        int rc = system("powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c >nul 2>nul");
-        if (rc == 0) {
+        if (tweaks_activate_high_performance_power()) {
             ui_ok("Plano de Energia alterado para " ANSI_BOLD "Alto Desempenho" ANSI_RESET);
             applied++;
         } else {

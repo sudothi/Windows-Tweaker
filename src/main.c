@@ -7,7 +7,7 @@
 #include <string.h>
 #include <windows.h>
 
-#define WT_VERSION "1.4.0"
+#define WT_VERSION "1.5.0"
 
 typedef struct {
     int  points_lost;
@@ -27,7 +27,7 @@ static int evaluate_health_score(
     if (!tw->is_high_performance) {
         penalties[count].points_lost = 8;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Plano de energia em '%s' (reduz a velocidade do processador)", tw->power_plan_name);
+                 "Plano de energia em '%s' (pode mudar para Alto Desempenho no menu abaixo)", tw->power_plan_name);
         score -= 8;
         count++;
     }
@@ -40,7 +40,7 @@ static int evaluate_health_score(
         count++;
     }
 
-    if (tw->menu_show_delay_ms > 100) {
+    if (tw->menu_show_delay_ms > 50) {
         penalties[count].points_lost = 6;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
                  "Velocidade dos menus em %d ms (atraso padrao lento do Windows)", tw->menu_show_delay_ms);
@@ -48,10 +48,20 @@ static int evaluate_health_score(
         count++;
     }
 
-    if (tw->startup_count > 6) {
+    if (tw->explorer_ads_enabled) {
+        penalties[count].points_lost = 4;
+        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
+                 "Anuncios e sugestoes promocionais ativos no Windows Explorer");
+        score -= 4;
+        count++;
+    }
+
+    /* So desconta pontos se houver mais de 6 programas REALMENTE HABILITADOS no Gerenciador de Tarefas */
+    if (tw->startup_enabled_count > 6) {
         penalties[count].points_lost = 8;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "%d programas abrindo sozinhos ao ligar o PC (gasta RAM e atrasa o boot)", tw->startup_count);
+                 "%d programas habilitados abrindo sozinhos no boot (gasta RAM e atrasa o login)",
+                 tw->startup_enabled_count);
         score -= 8;
         count++;
     }
@@ -64,20 +74,21 @@ static int evaluate_health_score(
         count++;
     }
 
-    if (st->total_cache_bytes > 1024ULL * 1024 * 1024) {
+    /* Usa o mesmo valor de safe_cleanable_bytes exibido no topo da caixa para nunca divergir! */
+    if (st->safe_cleanable_bytes > 500ULL * 1024 * 1024) {
         char sz[32];
-        ui_format_bytes(st->total_cache_bytes, sz, sizeof(sz));
+        ui_format_bytes(st->safe_cleanable_bytes, sz, sizeof(sz));
         penalties[count].points_lost = 7;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "%s acumulados em lixo e pastas de cache temporario", sz);
+                 "%s acumulados em lixo temporario do sistema (%%TEMP%%, CrashDumps, DirectX)", sz);
         score -= 7;
         count++;
-    } else if (st->total_cache_bytes > 200ULL * 1024 * 1024) {
+    } else if (st->safe_cleanable_bytes > 100ULL * 1024 * 1024) {
         char sz[32];
-        ui_format_bytes(st->total_cache_bytes, sz, sizeof(sz));
+        ui_format_bytes(st->safe_cleanable_bytes, sz, sizeof(sz));
         penalties[count].points_lost = 4;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "%s acumulados em pastas de cache temporario", sz);
+                 "%s acumulados em lixo temporario do sistema prontos para limpar", sz);
         score -= 4;
         count++;
     }
@@ -93,7 +104,7 @@ static int evaluate_health_score(
     if (!hw->secure_boot_enabled) {
         penalties[count].points_lost = 5;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "UEFI Secure Boot desativado na BIOS");
+                 "UEFI Secure Boot desativado na BIOS (so pode ser alterado manualmente na BIOS da placa-mae)");
         score -= 5;
         count++;
     }
@@ -126,8 +137,11 @@ static void render_summary_box(
     const char *status_label = (score >= 85) ? "Bem otimizado" :
                                (score >= 65) ? "Pode melhorar" : "Precisa de limpeza e ajustes";
 
-    char cache_str[32], cold_str[32];
-    ui_format_bytes(st->safe_cleanable_bytes, cache_str, sizeof(cache_str));
+    char sys_cache_str[32], dev_cache_str[32], cold_str[32];
+    uint64_t dev_cache_bytes = (st->total_cache_bytes > st->safe_cleanable_bytes)
+                               ? (st->total_cache_bytes - st->safe_cleanable_bytes) : 0;
+    ui_format_bytes(st->safe_cleanable_bytes, sys_cache_str, sizeof(sys_cache_str));
+    ui_format_bytes(dev_cache_bytes, dev_cache_str, sizeof(dev_cache_str));
     ui_format_bytes(st->total_cold_bytes, cold_str, sizeof(cold_str));
 
     char line_storage_buf[24][256];
@@ -135,20 +149,26 @@ static void render_summary_box(
     int n = 0;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Nota do seu PC           %s" ANSI_BOLD "%d / 100" ANSI_RESET "  " ANSI_DIM "(%s)" ANSI_RESET,
+             "Nota do seu PC            %s" ANSI_BOLD "%d / 100" ANSI_RESET "  " ANSI_DIM "(%s)" ANSI_RESET,
              score_col, score, status_label);
     box_lines[n] = line_storage_buf[n];
     n++;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Lixo temporario (Cache)  " ANSI_BOLD "%s" ANSI_RESET " prontos para limpar com sua permissao",
-             cache_str);
+             "Lixo temporario sistema   " ANSI_BOLD "%s" ANSI_RESET "  ·  Caches de Apps (NPM/Pip/Chrome): " ANSI_BOLD "%s" ANSI_RESET,
+             sys_cache_str, dev_cache_str);
     box_lines[n] = line_storage_buf[n];
     n++;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Arquivos grandes (+50MB) " ANSI_BOLD "%s" ANSI_RESET " sem uso ha mais de 30 dias (%d arquivos)",
+             "Arquivos grandes (+50MB)  " ANSI_BOLD "%s" ANSI_RESET " sem uso ha +30 dias (%d arquivos)",
              cold_str, st->cold_file_count);
+    box_lines[n] = line_storage_buf[n];
+    n++;
+
+    snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
+             "Programas no Boot         " ANSI_BOLD "%d Habilitados" ANSI_RESET "  " ANSI_DIM "(%d ja Desabilitados por voce no Task Manager)" ANSI_RESET,
+             tw->startup_enabled_count, tw->startup_disabled_count);
     box_lines[n] = line_storage_buf[n];
     n++;
 
@@ -174,12 +194,12 @@ static void render_summary_box(
     ui_box(box_lines, n, "Resultado da Analise (Nada foi alterado ainda)");
 }
 
-/* Tela de Limpeza e Exclusao: Primeiro analisa e mostra, depois permite escolher com permissao */
+/* Tela de Limpeza e Exclusao: Permite limpar caches do sistema, caches de dev (NPM/Pip) e arquivos grandes */
 static void interactive_file_removal_screen(storage_report_t *st, bool already_scanned) {
     if (!already_scanned) {
         ui_clear();
         ui_banner();
-        ui_step(1, 1, "Analisando disco, pastas de cache temporario e arquivos grandes (somente leitura)");
+        ui_step(1, 1, "Analisando disco, pastas de cache e arquivos grandes (somente leitura)");
         storage_run_audit(st, 50, 30, NULL);
     }
 
@@ -188,64 +208,85 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
         ui_banner();
         storage_print_removal_preview(st);
 
-        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Analise concluida. Nenhum arquivo foi apagado ainda. Escolha abaixo o que deseja fazer:" ANSI_RESET "\n");
+        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Analise concluida. Escolha abaixo com as setas o que deseja apagar:" ANSI_RESET "\n");
 
-        char labels_buf[MAX_COLD_FILES + 3][120];
-        const char *labels[MAX_COLD_FILES + 3];
+        char labels_buf[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4][120];
+        const char *labels[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4];
+        int opt_type[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4]; /* 0=all_sys_cache, 1=single_cache, 2=cold_file, 3=back */
+        int opt_index[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4];
         int total_opts = 0;
 
         char cache_sz[32];
         ui_format_bytes(st->safe_cleanable_bytes, cache_sz, sizeof(cache_sz));
 
         snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                 "Limpar todas as pastas de cache temporario acima (%s)", cache_sz);
-        labels[total_opts] = labels_buf[total_opts];
+                 "[LIMPAR CACHES DO SISTEMA] Apagar %%TEMP%%, Win\\Temp, CrashDumps e DirectX (%s)", cache_sz);
+        labels[total_opts]    = labels_buf[total_opts];
+        opt_type[total_opts]  = 0;
+        opt_index[total_opts] = -1;
         total_opts++;
+
+        /* Tambem permite limpar individualmente os caches pesados de NPM / Pip se tiverem arquivos */
+        for (int i = 0; i < st->cache_count; i++) {
+            const cache_target_t *c = &st->caches[i];
+            if (c->safe_to_clean || c->size_bytes == 0) continue;
+            char csz[32];
+            ui_format_bytes(c->size_bytes, csz, sizeof(csz));
+            snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                     "[LIMPAR CACHE OPCIONAL]    %s (%s em %u arquivos)",
+                     c->name, csz, c->file_count);
+            labels[total_opts]    = labels_buf[total_opts];
+            opt_type[total_opts]  = 1;
+            opt_index[total_opts] = i;
+            total_opts++;
+        }
 
         for (int i = 0; i < st->cold_file_count; i++) {
             const cold_file_t *cf = &st->cold_files[i];
             char fsz[32];
             ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
 
-            /* Encurta caminho longo para caber em 1 linha sem quebrar no terminal */
             const char *p = cf->path;
-            char short_path[58];
+            char short_path[52];
             size_t plen = strlen(p);
-            if (plen > 54) {
-                snprintf(short_path, sizeof(short_path), "...%s", p + (plen - 51));
+            if (plen > 48) {
+                snprintf(short_path, sizeof(short_path), "...%s", p + (plen - 45));
             } else {
                 snprintf(short_path, sizeof(short_path), "%s", p);
             }
 
             if (cf->deleted) {
                 snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                         "[JA EXCLUIDO] %s (%s)", short_path, fsz);
+                         "[JA EXCLUIDO]              %s (%s)", short_path, fsz);
             } else {
                 snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                         "Excluir arquivo: %-10s (%3d dias) -> %s", fsz, cf->days_unused, short_path);
+                         "[EXCLUIR ARQUIVO GRANDE]   %-10s (%3d dias) -> %s", fsz, cf->days_unused, short_path);
             }
-            labels[total_opts] = labels_buf[total_opts];
+            labels[total_opts]    = labels_buf[total_opts];
+            opt_type[total_opts]  = 2;
+            opt_index[total_opts] = i;
             total_opts++;
         }
 
         snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
                  "Sair e voltar ao Menu Principal");
-        labels[total_opts] = labels_buf[total_opts];
-        int back_idx = total_opts;
+        labels[total_opts]    = labels_buf[total_opts];
+        opt_type[total_opts]  = 3;
+        opt_index[total_opts] = -1;
         total_opts++;
 
         int sel = ui_select("ESCOLHA O QUE DESEJA LIMPAR (PEDIRA SUA PERMISSAO ANTES)", labels, total_opts);
 
-        if (sel == back_idx) {
+        if (opt_type[sel] == 3) {
             break;
         }
 
-        if (sel == 0) {
+        if (opt_type[sel] == 0) {
             char detail[200];
             snprintf(detail, sizeof(detail),
                      "Apagara os arquivos temporarios de %%TEMP%%, Win\\Temp, CrashDumps e DirectX (%s).",
                      cache_sz);
-            if (ui_confirm_arrows("Autoriza a limpeza das pastas de cache temporario agora?", detail)) {
+            if (ui_confirm_arrows("Autoriza a limpeza das pastas de cache temporario do sistema?", detail)) {
                 printf("\n");
                 uint64_t freed = 0;
                 uint32_t files = 0, locked = 0;
@@ -261,40 +302,127 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
                 ui_pause_enter("Continuar");
                 storage_run_audit(st, 50, 30, NULL);
             }
-        } else {
-            int file_idx = sel - 1;
-            if (file_idx >= 0 && file_idx < st->cold_file_count) {
-                cold_file_t *cf = &st->cold_files[file_idx];
-                if (cf->deleted) {
-                    ui_info("Este arquivo ja foi excluido do seu disco.");
-                    ui_pause_enter("Continuar");
-                    continue;
-                }
+        } else if (opt_type[sel] == 1) {
+            int c_idx = opt_index[sel];
+            const cache_target_t *c = &st->caches[c_idx];
+            char csz[32];
+            ui_format_bytes(c->size_bytes, csz, sizeof(csz));
+            char q[200], detail[240];
+            snprintf(q, sizeof(q), "Autoriza limpar a pasta '%s' (%s)?", c->name, csz);
+            snprintf(detail, sizeof(detail), "Caminho: %s (%s)", c->path, c->explanation);
+            if (ui_confirm_arrows(q, detail)) {
+                printf("\n");
+                uint64_t freed = 0;
+                uint32_t files = 0, locked = 0;
+                storage_clean_single_cache(c, false, &freed, &files, &locked);
+                ui_pause_enter("Continuar");
+                storage_run_audit(st, 50, 30, NULL);
+            }
+        } else if (opt_type[sel] == 2) {
+            int file_idx = opt_index[sel];
+            cold_file_t *cf = &st->cold_files[file_idx];
+            if (cf->deleted) {
+                ui_info("Este arquivo ja foi excluido do seu disco.");
+                ui_pause_enter("Continuar");
+                continue;
+            }
 
-                char fsz[32];
-                ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
-                char q[320];
-                char detail[360];
-                snprintf(q, sizeof(q), "Autoriza excluir permanentemente o arquivo '%s'?", cf->path);
-                snprintf(detail, sizeof(detail),
-                         "O arquivo sera apagado definitivamente da pasta de origem e liberara %s no disco.", fsz);
+            char fsz[32];
+            ui_format_bytes(cf->size_bytes, fsz, sizeof(fsz));
+            char q[320], detail[360];
+            snprintf(q, sizeof(q), "Autoriza excluir permanentemente o arquivo '%s'?", cf->path);
+            snprintf(detail, sizeof(detail),
+                     "O arquivo sera apagado definitivamente da pasta de origem e liberara %s no disco.", fsz);
 
-                if (ui_confirm_arrows(q, detail)) {
-                    uint64_t freed_b = 0;
-                    char err[128];
-                    printf("\n");
-                    if (storage_delete_single_file(cf->path, &freed_b, err, sizeof(err))) {
-                        ui_ok("Arquivo excluido com sucesso da pasta de origem: " ANSI_BOLD "%s" ANSI_RESET " (%s liberados)",
-                              cf->path, fsz);
-                        cf->deleted = true;
-                        if (st->total_cold_bytes >= freed_b) {
-                            st->total_cold_bytes -= freed_b;
-                        }
-                    } else {
-                        ui_fail("Nao foi possivel excluir '%s': %s", cf->path, err);
+            if (ui_confirm_arrows(q, detail)) {
+                uint64_t freed_b = 0;
+                char err[128];
+                printf("\n");
+                if (storage_delete_single_file(cf->path, &freed_b, err, sizeof(err))) {
+                    ui_ok("Arquivo excluido com sucesso da pasta de origem: " ANSI_BOLD "%s" ANSI_RESET " (%s liberados)",
+                          cf->path, fsz);
+                    cf->deleted = true;
+                    if (st->total_cold_bytes >= freed_b) {
+                        st->total_cold_bytes -= freed_b;
                     }
-                    ui_pause_enter("Continuar");
+                } else {
+                    ui_fail("Nao foi possivel excluir '%s': %s", cf->path, err);
                 }
+                ui_pause_enter("Continuar");
+            }
+        }
+    }
+}
+
+/* Tela Interativa de Programas na Inicializacao (Boot): Permite Habilitar / Desabilitar igual ao Task Manager */
+static void interactive_startup_screen(tweaks_report_t *tw, bool already_scanned) {
+    if (!already_scanned) {
+        ui_clear();
+        ui_banner();
+        tweaks_run_audit(tw);
+    }
+
+    for (;;) {
+        ui_clear();
+        ui_banner();
+        tweaks_print_startup(tw);
+
+        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Selecione qualquer programa abaixo e aperte ENTER para Desabilitar ou Habilitar no Boot:" ANSI_RESET "\n");
+
+        char labels_buf[MAX_STARTUP_ENTRIES + 2][120];
+        const char *labels[MAX_STARTUP_ENTRIES + 2];
+        int total_opts = 0;
+
+        for (int i = 0; i < tw->startup_count; i++) {
+            const startup_entry_t *e = &tw->startup_apps[i];
+            if (e->enabled) {
+                snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                         "[HABILITADO   -> Clique para Desabilitar]  %s (%s)",
+                         e->name, e->is_hkcu ? "Usuario" : "Sistema");
+            } else {
+                snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                         "[DESABILITADO -> Clique para Habilitar  ]  %s (%s)",
+                         e->name, e->is_hkcu ? "Usuario" : "Sistema");
+            }
+            labels[total_opts] = labels_buf[total_opts];
+            total_opts++;
+        }
+
+        snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                 "Sair e voltar ao Menu Principal");
+        labels[total_opts] = labels_buf[total_opts];
+        int back_idx = total_opts;
+        total_opts++;
+
+        int sel = ui_select("GERENCIAR PROGRAMAS DO BOOT (SINCRONIZADO COM TASK MANAGER)", labels, total_opts);
+        if (sel == back_idx) {
+            break;
+        }
+
+        if (sel >= 0 && sel < tw->startup_count) {
+            startup_entry_t *e = &tw->startup_apps[sel];
+            bool target_state = !e->enabled;
+            char q[200], detail[260];
+            snprintf(q, sizeof(q), "Deseja %s '%s' na inicializacao do Windows?",
+                     target_state ? "HABILITAR" : "DESABILITAR", e->name);
+            snprintf(detail, sizeof(detail), "Executavel: %s", e->command);
+
+            if (ui_confirm_arrows(q, detail)) {
+                printf("\n");
+                if (tweaks_toggle_startup_entry(e, target_state)) {
+                    if (target_state) {
+                        tw->startup_enabled_count++;
+                        tw->startup_disabled_count--;
+                        ui_ok("'%s' agora esta " ANSI_BOLD "HABILITADO" ANSI_RESET " na inicializacao.", e->name);
+                    } else {
+                        tw->startup_enabled_count--;
+                        tw->startup_disabled_count++;
+                        ui_ok("'%s' agora esta " ANSI_BOLD "DESABILITADO" ANSI_RESET " (nao abrira mais junto com o PC).", e->name);
+                    }
+                } else {
+                    ui_fail("Permissao negada para alterar '%s' (itens do Sistema HKLM exigem abrir como Administrador).", e->name);
+                }
+                ui_pause_enter("Continuar");
             }
         }
     }
@@ -302,57 +430,94 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
 
 /* Tela de Otimizacao do Windows: So oferece aplicar o que estiver realmente PENDENTE */
 static void interactive_optimize_screen(void) {
-    ui_clear();
-    ui_banner();
+    for (;;) {
+        ui_clear();
+        ui_banner();
 
-    tweaks_report_t current;
-    int pending = tweaks_inspect_optimizations(&current);
+        tweaks_report_t current;
+        int pending = tweaks_inspect_optimizations(&current);
 
-    if (pending == 0) {
-        ui_ok(ANSI_BOLD "Tudo otimizado!" ANSI_RESET " Todos os 4 ajustes acima ja estao ativos no seu Windows (nada pendente).");
+        if (pending == 0) {
+            ui_ok(ANSI_BOLD "Tudo otimizado!" ANSI_RESET " Todos os 4 ajustes acima ja estao ativos no seu Windows (nada pendente).");
 
-        const char *done_labels[] = {
-            "Voltar ao Menu Principal",
-            "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)"
-        };
-        int sel = ui_select("NENHUMA OTIMIZACAO PENDENTE", done_labels, 2);
-        if (sel == 1) {
-            if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao lento de fabrica?",
+            const char *done_labels[] = {
+                "Voltar ao Menu Principal",
+                "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)"
+            };
+            int sel = ui_select("NENHUMA OTIMIZACAO PENDENTE", done_labels, 2);
+            if (sel == 1) {
+                if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao lento de fabrica?",
+                                      "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
+                    printf("\n");
+                    tweaks_restore_windows_defaults();
+                    ui_pause_enter("Continuar");
+                    continue;
+                }
+            }
+            return;
+        }
+
+        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Encontrados %d ajuste(s) pendente(s). Os itens que ja estao 'JA OTIMIZADO' nao serao tocados." ANSI_RESET "\n",
+               pending);
+
+        char apply_all_btn[128];
+        snprintf(apply_all_btn, sizeof(apply_all_btn),
+                 "Autorizar e aplicar todos os %d ajuste(s) pendente(s) agora", pending);
+
+        char opt_buf[6][128];
+        const char *opt_labels[6];
+        int opt_code[6]; /* 0=apply_all, 1=power_only, 2=back, 3=restore */
+        int count = 0;
+
+        snprintf(opt_buf[count], sizeof(opt_buf[count]), "%s", apply_all_btn);
+        opt_labels[count] = opt_buf[count];
+        opt_code[count] = 0;
+        count++;
+
+        if (!current.is_high_performance) {
+            snprintf(opt_buf[count], sizeof(opt_buf[count]),
+                     "Mudar apenas o Plano de Energia para 'Alto Desempenho' agora");
+            opt_labels[count] = opt_buf[count];
+            opt_code[count] = 1;
+            count++;
+        }
+
+        snprintf(opt_buf[count], sizeof(opt_buf[count]),
+                 "Sair e voltar ao Menu Principal sem alterar nada");
+        opt_labels[count] = opt_buf[count];
+        opt_code[count] = 2;
+        count++;
+
+        snprintf(opt_buf[count], sizeof(opt_buf[count]),
+                 "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)");
+        opt_labels[count] = opt_buf[count];
+        opt_code[count] = 3;
+        count++;
+
+        int sel = ui_select("DESEJA APLICAR OS AJUSTES PENDENTES?", opt_labels, count);
+        if (opt_code[sel] == 2) {
+            break;
+        } else if (opt_code[sel] == 0) {
+            printf("\n");
+            int applied = tweaks_apply_pending_optimizations(&current);
+            printf("\n");
+            ui_ok(ANSI_BOLD "%d ajuste(s) pendente(s) aplicado(s) com sucesso!" ANSI_RESET, applied);
+            ui_pause_enter("Ver resultado atualizado");
+        } else if (opt_code[sel] == 1) {
+            printf("\n");
+            if (tweaks_activate_high_performance_power()) {
+                ui_ok("Plano de Energia alterado com sucesso para " ANSI_BOLD "Alto Desempenho" ANSI_RESET "!");
+            } else {
+                ui_warn("Nao foi possivel ativar o plano Alto Desempenho.");
+            }
+            ui_pause_enter("Ver resultado atualizado");
+        } else if (opt_code[sel] == 3) {
+            if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao de fabrica?",
                                   "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
                 printf("\n");
                 tweaks_restore_windows_defaults();
-                ui_pause_enter("Voltar ao Menu Principal");
+                ui_pause_enter("Ver resultado atualizado");
             }
-        }
-        return;
-    }
-
-    printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Encontrados %d ajuste(s) pendente(s). Os itens que ja estao 'JA OTIMIZADO' nao serao tocados." ANSI_RESET "\n",
-           pending);
-
-    char apply_btn[128];
-    snprintf(apply_btn, sizeof(apply_btn),
-             "Autorizar e aplicar apenas o(s) %d ajuste(s) pendente(s) agora", pending);
-
-    const char *opt_labels[] = {
-        apply_btn,
-        "Sair e voltar ao Menu Principal sem alterar nada",
-        "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)"
-    };
-
-    int sel = ui_select("DESEJA APLICAR OS AJUSTES PENDENTES?", opt_labels, 3);
-    if (sel == 0) {
-        printf("\n");
-        int applied = tweaks_apply_pending_optimizations(&current);
-        printf("\n");
-        ui_ok(ANSI_BOLD "%d ajuste(s) pendente(s) aplicado(s) com sucesso!" ANSI_RESET, applied);
-        ui_pause_enter("Voltar ao Menu Principal");
-    } else if (sel == 2) {
-        if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao de fabrica?",
-                              "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
-            printf("\n");
-            tweaks_restore_windows_defaults();
-            ui_pause_enter("Voltar ao Menu Principal");
         }
     }
 }
@@ -364,7 +529,7 @@ static void print_help(void) {
     printf("  windows-tweaker scan        executa a analise completa (somente leitura)\n");
     printf("  windows-tweaker limpar      analisa os caches e arquivos grandes e pede permissao para limpar\n");
     printf("  windows-tweaker otimizar    analisa ou aplica os ajustes do Windows e Jogos\n");
-    printf("  windows-tweaker startup     lista todos os programas que iniciam sozinhos no boot\n");
+    printf("  windows-tweaker startup     lista e gerencia os programas que iniciam com o Windows\n");
     printf("  windows-tweaker hardware    mostra processador, memoria RAM, placa-mae e BIOS\n\n");
     printf(ANSI_BOLD "Opcoes para uso via script" ANSI_RESET "\n");
     printf("  --dry-run                   apenas analisa sem apagar nem alterar nada\n");
@@ -373,13 +538,12 @@ static void print_help(void) {
     printf("  --days 30                   dias sem uso para listar arquivos grandes esquecidos (padrao: 30)\n");
 }
 
-/* Menu Principal: 1 linha por item (nunca quebra linha) e resumo exibido ao abrir cada opcao */
 static int interactive_menu(void) {
     static const char *MAIN_LABELS[] = {
         "1. Diagnostico Completo do PC (Nota de 0 a 100 explicada)",
         "2. Limpar Caches Temporarios e Excluir Arquivos Pesados",
-        "3. Otimizar Windows e Jogos (Menus Instantaneos e FPS)",
-        "4. Programas na Inicializacao (Ver o que deixa o Boot lento)",
+        "3. Otimizar Windows e Jogos (Plano de Energia, Menus e GameDVR)",
+        "4. Programas na Inicializacao (Habilitar / Desabilitar no Boot)",
         "5. Hardware, Memoria RAM e BIOS (CPU, Virtualizacao e Secure Boot)",
         "0. Sair do Windows Tweaker"
     };
@@ -401,8 +565,8 @@ static int interactive_menu(void) {
         if (choice == 0) {
             if (!ui_open_tool_screen(
                     "1. DIAGNOSTICO COMPLETO DO PC",
-                    "Vai ler as informacoes do seu Processador, Memoria RAM, BIOS, medir o espaco ocupado por lixo temporario no disco e checar as configuracoes de desempenho do Windows.",
-                    "Voce vera um relatorio explicando cada item e o motivo da sua nota de 0 a 100. Depois da analise, voce podera escolher se quer corrigir os problemas encontrados."
+                    "Vai ler as informacoes do seu Processador, Memoria RAM, BIOS, medir o espaco ocupado por lixo temporario no disco e checar o Plano de Energia e programas habilitados no Boot.",
+                    "Voce vera um relatorio explicando cada item e o motivo da sua nota de 0 a 100. Logo abaixo do resultado apareceram os botoes diretos para resolver cada item pendente."
                 )) {
                 continue;
             }
@@ -428,28 +592,76 @@ static int interactive_menu(void) {
 
             render_summary_box(&hw, &st, &tw);
 
-            const char *post_labels[] = {
-                "Ir para Limpeza de Caches e Arquivos Pesados (escolher o que apagar)",
-                "Ir para Otimizacao do Windows e Jogos (aplicar ajustes com sua permissao)",
-                "Ver Lista dos Programas que Iniciam no Boot",
-                "Voltar ao Menu Principal"
-            };
+            /* Monta botoes de acao pos-diagnostico conectados diretamente aos problemas encontrados! */
+            char post_buf[6][128];
+            const char *post_labels[6];
+            int post_code[6]; /* 0=power_fix, 1=optimize_screen, 2=clean_screen, 3=startup_screen, 4=back */
+            int pcount = 0;
 
-            int next_act = ui_select("ANALISE CONCLUIDA - O QUE DESEJA FAZER AGORA?", post_labels, 4);
-            if (next_act == 0) {
-                interactive_file_removal_screen(&st, true);
-            } else if (next_act == 1) {
+            if (!tw.is_high_performance) {
+                snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
+                         "Corrigir Plano de Energia: Ativar 'Alto Desempenho' agora (+8 pts na nota)");
+                post_labels[pcount] = post_buf[pcount];
+                post_code[pcount] = 0;
+                pcount++;
+            }
+
+            if (tw.pending_tweaks_count > 0) {
+                snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
+                         "Ir para Otimizacao do Windows e Jogos (%d ajuste(s) pendente(s))",
+                         tw.pending_tweaks_count);
+                post_labels[pcount] = post_buf[pcount];
+                post_code[pcount] = 1;
+                pcount++;
+            }
+
+            char clean_sz[32];
+            ui_format_bytes(st.safe_cleanable_bytes, clean_sz, sizeof(clean_sz));
+            snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
+                     "Ir para Limpeza de Caches (%s) e Arquivos Grandes (%d encontrados)",
+                     clean_sz, st.cold_file_count);
+            post_labels[pcount] = post_buf[pcount];
+            post_code[pcount] = 2;
+            pcount++;
+
+            snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
+                     "Gerenciar Programas do Boot (%d habilitados, %d ja desabilitados)",
+                     tw.startup_enabled_count, tw.startup_disabled_count);
+            post_labels[pcount] = post_buf[pcount];
+            post_code[pcount] = 3;
+            pcount++;
+
+            snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
+                     "Voltar ao Menu Principal");
+            post_labels[pcount] = post_buf[pcount];
+            post_code[pcount] = 4;
+            pcount++;
+
+            int next_sel = ui_select("ANALISE CONCLUIDA - O QUE DESEJA FAZER AGORA?", post_labels, pcount);
+            int action = post_code[next_sel];
+
+            if (action == 0) {
+                if (ui_confirm_arrows("Autoriza mudar o Plano de Energia do Windows para 'Alto Desempenho' agora?",
+                                      "Executa powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c para evitar quedas de clock da CPU.")) {
+                    printf("\n");
+                    if (tweaks_activate_high_performance_power()) {
+                        ui_ok("Plano de Energia alterado com sucesso para " ANSI_BOLD "Alto Desempenho" ANSI_RESET " (+8 pts recuperados)!");
+                    } else {
+                        ui_warn("Nao foi possivel ativar o plano Alto Desempenho.");
+                    }
+                    ui_pause_enter("Voltar ao Menu Principal");
+                }
+            } else if (action == 1) {
                 interactive_optimize_screen();
-            } else if (next_act == 2) {
-                ui_clear();
-                ui_banner();
-                tweaks_print_startup(&tw);
-                ui_pause_enter("Voltar ao Menu Principal");
+            } else if (action == 2) {
+                interactive_file_removal_screen(&st, true);
+            } else if (action == 3) {
+                interactive_startup_screen(&tw, true);
             }
         } else if (choice == 1) {
             if (!ui_open_tool_screen(
                     "2. LIMPAR CACHES TEMPORARIOS E EXCLUIR ARQUIVOS PESADOS",
-                    "Vai escanear as pastas de lixo temporario do Windows (%TEMP%, Win\\Temp, CrashDumps, DirectX) e procurar arquivos grandes (>50 MB) nas suas pastas que nao sao usados ha mais de 30 dias.",
+                    "Vai escanear as pastas de lixo temporario do Windows (%TEMP%, Win\\Temp, CrashDumps, DirectX), caches de desenvolvimento (NPM/Pip) e arquivos grandes (>50 MB) sem uso ha +30 dias.",
                     "Mostrara a lista completa do que foi encontrado. Nada sera apagado durante a analise: voce escolhida na tela seguinte exatamente o que autoriza remover."
                 )) {
                 continue;
@@ -459,8 +671,8 @@ static int interactive_menu(void) {
         } else if (choice == 2) {
             if (!ui_open_tool_screen(
                     "3. OTIMIZAR WINDOWS E JOGOS",
-                    "Vai verificar no Registro do Windows o tempo de resposta dos menus (MenuShowDelay) e se a gravacao em segundo plano do Xbox GameDVR esta consumindo recursos da placa de video.",
-                    "Mostrara o valor atual e o valor otimizado de cada chave. Os ajustes so serao gravados se voce autorizar na etapa seguinte."
+                    "Vai verificar 4 configuracoes: Plano de Energia (Alto Desempenho), Velocidade dos Menus (MenuShowDelay), Xbox GameDVR e Anuncios no Windows Explorer.",
+                    "Os itens que ja estiverem otimizados aparecerao como 'JA OTIMIZADO' e nao serao tocados. Voce podera aplicar apenas o que estiver pendente."
                 )) {
                 continue;
             }
@@ -468,17 +680,13 @@ static int interactive_menu(void) {
         } else if (choice == 3) {
             if (!ui_open_tool_screen(
                     "4. PROGRAMAS NA INICIALIZACAO (BOOT)",
-                    "Vai ler as chaves HKCU\\Run e HKLM\\Run do Registro do Windows para listar todos os programas que abrem sozinhos quando voce liga o computador.",
-                    "Exibira a lista completa com o nome e o caminho do executavel de cada programa (apenas leitura e diagnostico)."
+                    "Vai ler as chaves Run e StartupApproved\\Run do Registro (a mesma tabela do Gerenciador de Tarefas) para identificar quais programas estao realmente HABILITADOS e quais voce ja desabilitou.",
+                    "Voce podera selecionar qualquer programa da lista com as setas e apertar ENTER para Desabilitar ou Habilitar no Boot."
                 )) {
                 continue;
             }
-            ui_clear();
-            ui_banner();
             tweaks_report_t tw;
-            tweaks_run_audit(&tw);
-            tweaks_print_startup(&tw);
-            ui_pause_enter("Voltar ao Menu Principal");
+            interactive_startup_screen(&tw, false);
         } else if (choice == 4) {
             if (!ui_open_tool_screen(
                     "5. HARDWARE, MEMORIA RAM E BIOS",

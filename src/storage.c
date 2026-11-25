@@ -384,35 +384,36 @@ static void preview_files_in_dir(const char *dir_path, int *printed, int max_to_
 }
 
 void storage_print_removal_preview(const storage_report_t *report) {
-    ui_header_box("PASTAS DE CACHE TEMPORARIO ENCONTRADAS NO SEU PC",
-                  "Estes arquivos sao temporarios. Nenhum documento ou foto sua fica nestas pastas.");
+    ui_header_box("PASTAS DE CACHE ENCONTRADAS NO SEU PC",
+                  "Veja abaixo quanto cada pasta ocupa e exemplos reais de arquivos dentro delas.");
 
     int shown_caches = 0;
     for (int i = 0; i < report->cache_count; i++) {
         const cache_target_t *c = &report->caches[i];
-        if (!c->safe_to_clean || c->file_count == 0) continue;
+        if (c->file_count == 0) continue;
         shown_caches++;
 
         char sz[32];
         ui_format_bytes(c->size_bytes, sz, sizeof(sz));
+        const char *tipo = c->safe_to_clean ? "Cache Temporario do Sistema" : "Cache de Ferramenta / Navegador";
         printf("  " ANSI_YELLOW "!" ANSI_RESET " " ANSI_BOLD "%-32s" ANSI_RESET " " ANSI_YELLOW "%-10s" ANSI_RESET
-               " " ANSI_DIM "(%u arquivos)" ANSI_RESET "\n",
-               c->name, sz, c->file_count);
+               " " ANSI_DIM "(%u arquivos · %s)" ANSI_RESET "\n",
+               c->name, sz, c->file_count, tipo);
         printf("    " ANSI_DIM "│ Pasta : %s" ANSI_RESET "\n", c->path);
         printf("    " ANSI_DIM "│ O que : %s" ANSI_RESET "\n", c->explanation);
         printf("    " ANSI_DIM "╰ Exemplos de arquivos que estao la dentro agora:" ANSI_RESET "\n");
 
         int printed = 0;
-        preview_files_in_dir(c->path, &printed, 3);
+        preview_files_in_dir(c->path, &printed, 2);
         if ((int)c->file_count > printed) {
-            printf("      " ANSI_DIM "  ... e mais %u arquivos temporarios nesta pasta." ANSI_RESET "\n",
+            printf("      " ANSI_DIM "  ... e mais %u arquivos nesta pasta." ANSI_RESET "\n",
                    c->file_count - (uint32_t)printed);
         }
         printf("\n");
     }
 
     if (shown_caches == 0) {
-        ui_ok("Todas as pastas de cache temporario ja estao limpas!");
+        ui_ok("Todas as pastas de cache ja estao limpas!");
     }
 }
 
