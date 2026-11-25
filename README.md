@@ -3,7 +3,7 @@
 
   <h1>Windows Tweaker</h1>
 
-  <p><strong>Diagnóstico, limpeza profunda de disco e otimização do Windows 10/11 direto em C11.</strong></p>
+  <p><strong>Diagnóstico, limpeza profunda de disco e otimização do Windows 10/11.</strong></p>
 
   <p>
     <a href="https://github.com/sudothi/windows-tweaker/releases"><img src="https://img.shields.io/github/v/release/sudothi/windows-tweaker?style=flat-square&label=vers%C3%A3o&color=10b981" alt="versão"></a>
@@ -21,7 +21,7 @@
         ▀██████████▀           o seu PC, limpo e otimizado
   ▄██████████████████████▄
   ████████████████████████     diagnostico, limpeza de disco e
-   ▀████████████████████▀      ajustes do Windows, direto em C
+   ▀████████████████████▀      ajustes de desempenho do Windows
     ████████▀██▀████████
      ▀▀█▀▀  ▄██   ▀▀█▀▀
            ███

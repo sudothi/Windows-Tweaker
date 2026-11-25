@@ -35,7 +35,7 @@ static const char *BANNER_TEXT[] = {
     "o seu PC, limpo e otimizado",
     "",
     "diagnostico, limpeza de disco e",
-    "ajustes do Windows, direto em C",
+    "ajustes de desempenho do Windows",
     "",
     "",
     ""
