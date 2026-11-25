@@ -37,7 +37,6 @@ static int test_byte_formatter(void) {
 }
 
 static int test_verified_file_deletion(void) {
-    /* Cria um arquivo temporario real com atributo READONLY e testa se storage_delete_single_file remove de verdade */
     char temp_dir[MAX_PATH];
     GetTempPathA(sizeof(temp_dir), temp_dir);
 
@@ -50,7 +49,6 @@ static int test_verified_file_deletion(void) {
     fwrite(payload, 1, strlen(payload), fp);
     fclose(fp);
 
-    /* Define como somente-leitura para garantir que o motor remove a trava antes de excluir */
     SetFileAttributesA(test_file, FILE_ATTRIBUTE_READONLY);
 
     uint64_t freed = 0;
@@ -76,9 +74,11 @@ static int test_tweaks_audit(void) {
     tweaks_report_t tw;
     tweaks_run_audit(&tw);
 
-    ASSERT_TRUE(strlen(tw.power_plan_name) > 0, "Identificacao do plano de energia ativo");
-    ASSERT_TRUE(tw.startup_count >= 0 && tw.startup_count <= MAX_STARTUP_ENTRIES,
-                "Enumeracao de programas de inicializacao dentro dos limites");
+    ASSERT_TRUE(tw.rule_count == MAX_TWEAK_RULES, "Catalogo completo de 12 regras de otimizacao carregado");
+    ASSERT_TRUE(tw.optimized_tweaks_count + tw.pending_tweaks_count == MAX_TWEAK_RULES,
+                "Soma exata de regras otimizadas + pendentes == 12");
+    ASSERT_TRUE(tw.startup_enabled_count + tw.startup_disabled_count == tw.startup_count,
+                "Sincronizacao StartupApproved\\Run (Habilitados + Desabilitados == Total)");
     return 0;
 }
 
@@ -96,7 +96,7 @@ int main(void) {
     ui_step(3, 4, "Telemetria de Hardware (__cpuid)");
     rc |= test_hardware_probe();
 
-    ui_step(4, 4, "Auditoria de Registro do Windows");
+    ui_step(4, 4, "Auditoria das 12 Regras do Windows & StartupApproved\\Run");
     rc |= test_tweaks_audit();
 
     char summary[64];

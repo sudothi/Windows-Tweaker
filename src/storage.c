@@ -26,6 +26,19 @@ static int filetime_days_since(const FILETIME *ft) {
     return (int)(diff / TICKS_PER_DAY);
 }
 
+static uint64_t query_root_system_file_size(const char *full_path) {
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(full_path, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    ULARGE_INTEGER sz;
+    sz.LowPart  = fd.nFileSizeLow;
+    sz.HighPart = fd.nFileSizeHigh;
+    FindClose(hFind);
+    return sz.QuadPart;
+}
+
 static void scan_dir_size_recursive(
     const char *dir_path,
     int depth,
@@ -100,7 +113,40 @@ static void record_cold_file(storage_report_t *report, const char *full_path, ui
     }
 }
 
-static void scan_cold_files_recursive(
+static bool is_dev_artifact_dir_name(const char *name) {
+    return (strcmp(name, "node_modules") == 0 ||
+            strcmp(name, ".venv") == 0 ||
+            strcmp(name, "venv") == 0 ||
+            strcmp(name, ".next") == 0);
+}
+
+static void record_dev_artifact_dir(
+    storage_report_t *report,
+    const char *kind,
+    const char *full_path,
+    int days_unused
+) {
+    if (report->dev_dir_count >= MAX_DEV_ARTIFACT_DIRS) return;
+
+    uint64_t dir_bytes = 0;
+    uint32_t dir_files = 0;
+    scan_dir_size_recursive(full_path, 0, 5, &dir_bytes, &dir_files, kind);
+
+    /* So registra pastas de build/dependencias maiores que 25 MB */
+    if (dir_bytes < 25ULL * 1024 * 1024) return;
+
+    dev_artifact_t *d = &report->dev_dirs[report->dev_dir_count++];
+    strncpy(d->kind, kind, sizeof(d->kind) - 1);
+    strncpy(d->path, full_path, sizeof(d->path) - 1);
+    d->size_bytes  = dir_bytes;
+    d->file_count  = dir_files;
+    d->days_unused = days_unused;
+    d->deleted     = false;
+
+    report->total_dev_bytes += dir_bytes;
+}
+
+static void scan_user_folders_recursive(
     const char *dir_path,
     int depth,
     int max_depth,
@@ -126,15 +172,22 @@ static void scan_cold_files_recursive(
         snprintf(full_path, sizeof(full_path), "%s\\%s", dir_path, fd.cFileName);
 
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            /* Detecta pastas pesadas de desenvolvimento (node_modules, .venv, venv, .next) */
+            if (is_dev_artifact_dir_name(fd.cFileName)) {
+                int days_w = filetime_days_since(&fd.ftLastWriteTime);
+                record_dev_artifact_dir(report, fd.cFileName, full_path, days_w);
+                continue; /* Nao entra recursivamente dentro de node_modules para buscar cold files */
+            }
+
             if (fd.cFileName[0] == '.' || _stricmp(fd.cFileName, "AppData") == 0) {
                 continue;
             }
-            scan_cold_files_recursive(full_path, depth + 1, max_depth, min_bytes, min_days, report, inspected_count);
+            scan_user_folders_recursive(full_path, depth + 1, max_depth, min_bytes, min_days, report, inspected_count);
         } else {
             (*inspected_count)++;
             if ((*inspected_count % 250) == 0) {
                 char msg[160];
-                snprintf(msg, sizeof(msg), "Procurando arquivos grandes sem uso em %s...", dir_path);
+                snprintf(msg, sizeof(msg), "Procurando arquivos grandes e projetos em %s...", dir_path);
                 ui_spinner_update(g_spinner_step++, msg);
             }
 
@@ -214,6 +267,10 @@ void storage_run_audit(storage_report_t *report, uint64_t min_cold_size_mb, int 
         report->used_bytes  = total_bytes.QuadPart - total_free.QuadPart;
     }
 
+    /* Inspeciona o tamanho real dos arquivos ocultos C:\hiberfil.sys e C:\pagefile.sys */
+    report->hiberfil_bytes = query_root_system_file_size("C:\\hiberfil.sys");
+    report->pagefile_bytes = query_root_system_file_size("C:\\pagefile.sys");
+
     char local_appdata[MAX_PATH] = {0};
     char user_profile[MAX_PATH]  = {0};
     char windir[MAX_PATH]        = {0};
@@ -272,14 +329,14 @@ void storage_run_audit(storage_report_t *report, uint64_t min_cold_size_mb, int 
     uint32_t inspected = 0;
 
     if (custom_dir && custom_dir[0] != '\0') {
-        scan_cold_files_recursive(custom_dir, 0, 4, min_bytes, min_cold_days, report, &inspected);
+        scan_user_folders_recursive(custom_dir, 0, 4, min_bytes, min_cold_days, report, &inspected);
     } else if (user_profile[0]) {
         const char *subfolders[] = { "Downloads", "Documents", "Videos", "Desktop" };
         for (int i = 0; i < 4; i++) {
             snprintf(path_buf, sizeof(path_buf), "%s\\%s", user_profile, subfolders[i]);
             DWORD attr = GetFileAttributesA(path_buf);
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
-                scan_cold_files_recursive(path_buf, 0, 3, min_bytes, min_cold_days, report, &inspected);
+                scan_user_folders_recursive(path_buf, 0, 3, min_bytes, min_cold_days, report, &inspected);
             }
         }
     }
@@ -289,8 +346,10 @@ void storage_run_audit(storage_report_t *report, uint64_t min_cold_size_mb, int 
 
     char summary_buf[160];
     char size_buf[32];
-    ui_format_bytes(report->total_cache_bytes + report->total_cold_bytes, size_buf, sizeof(size_buf));
-    snprintf(summary_buf, sizeof(summary_buf), "Armazenamento analisado (%s mapeados em caches e arquivos grandes)", size_buf);
+    ui_format_bytes(report->total_cache_bytes + report->total_cold_bytes + report->total_dev_bytes,
+                    size_buf, sizeof(size_buf));
+    snprintf(summary_buf, sizeof(summary_buf),
+             "Armazenamento analisado (%s mapeados em caches, projetos e arquivos grandes)", size_buf);
     ui_spinner_stop(summary_buf, true);
 }
 
@@ -317,6 +376,23 @@ void storage_print_report(const storage_report_t *report) {
         );
     }
 
+    if (report->hiberfil_bytes > 0 || report->pagefile_bytes > 0) {
+        char hib_s[32], page_s[32], sys_files_val[128];
+        ui_format_bytes(report->hiberfil_bytes, hib_s, sizeof(hib_s));
+        ui_format_bytes(report->pagefile_bytes, page_s, sizeof(page_s));
+        snprintf(sys_files_val, sizeof(sys_files_val), "hiberfil.sys: %s  ·  pagefile.sys: %s", hib_s, page_s);
+
+        ui_item_block(
+            report->hiberfil_bytes < 4ULL * 1024 * 1024 * 1024,
+            "Arquivos Ocultos do Windows",
+            sys_files_val,
+            "C:\\hiberfil.sys guarda a memoria para hibernacao e C:\\pagefile.sys e a memoria virtual no SSD.",
+            report->hiberfil_bytes < 4ULL * 1024 * 1024 * 1024
+                ? "Tamanho do arquivo de hibernacao dentro do normal."
+                : "Voce pode reduzir o hiberfil.sys pela metade na tela '3. Otimizar Windows'."
+        );
+    }
+
     char clean_sz[32];
     ui_format_bytes(report->safe_cleanable_bytes, clean_sz, sizeof(clean_sz));
     char cache_val[128];
@@ -329,8 +405,22 @@ void storage_print_report(const storage_report_t *report) {
         "Arquivos deixados para tras em %TEMP%, Win\\Temp, CrashDumps e DirectX.",
         report->safe_cleanable_bytes < 150ULL * 1024 * 1024
             ? "Pouco lixo temporario acumulado no momento."
-            : "Selecione 'Limpar Caches e Excluir Arquivos Pesados' no menu para apagar com 1 Enter."
+            : "Selecione '2. Limpar Caches e Excluir Arquivos Pesados' no menu para apagar com 1 Enter."
     );
+
+    if (report->dev_dir_count > 0) {
+        char dev_sz[32], dev_val[128];
+        ui_format_bytes(report->total_dev_bytes, dev_sz, sizeof(dev_sz));
+        snprintf(dev_val, sizeof(dev_val), "%d pasta(s) node_modules/.venv somando %s",
+                 report->dev_dir_count, dev_sz);
+        ui_item_block(
+            false,
+            "Pastas de Projetos (Dev)",
+            dev_val,
+            "Pastas pesadas de dependencias (node_modules / .venv) encontradas nas suas pastas.",
+            "Podem ser excluidas individualmente na tela '2. Limpar Caches e Excluir Arquivos Pesados'."
+        );
+    }
 
     char cold_sz[32];
     ui_format_bytes(report->total_cold_bytes, cold_sz, sizeof(cold_sz));
@@ -504,6 +594,18 @@ static void clean_dir_contents_recursive(
     } while (FindNextFileA(hFind, &fd));
 
     FindClose(hFind);
+}
+
+bool storage_delete_directory_tree(const char *dir_path, uint64_t *out_freed_bytes, uint32_t *out_files_deleted) {
+    *out_freed_bytes = 0;
+    *out_files_deleted = 0;
+    uint32_t locked = 0;
+
+    clean_dir_contents_recursive(dir_path, false, out_freed_bytes, out_files_deleted, &locked);
+    SetFileAttributesA(dir_path, FILE_ATTRIBUTE_NORMAL);
+    RemoveDirectoryA(dir_path);
+
+    return (GetFileAttributesA(dir_path) == INVALID_FILE_ATTRIBUTES || *out_files_deleted > 0);
 }
 
 void storage_clean_single_cache(

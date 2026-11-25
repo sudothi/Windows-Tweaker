@@ -7,7 +7,7 @@
 #include <string.h>
 #include <windows.h>
 
-#define WT_VERSION "1.5.0"
+#define WT_VERSION "2.0.0"
 
 typedef struct {
     int  points_lost;
@@ -24,40 +24,20 @@ static int evaluate_health_score(
     int score = 100;
     int count = 0;
 
-    if (!tw->is_high_performance) {
-        penalties[count].points_lost = 8;
-        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Plano de energia em '%s' (pode mudar para Alto Desempenho no menu abaixo)", tw->power_plan_name);
-        score -= 8;
-        count++;
+    /* 1. Avalia cada uma das 12 regras de otimizacao do Windows */
+    for (int i = 0; i < tw->rule_count && count < 18; i++) {
+        const tweak_rule_t *r = &tw->rules[i];
+        if (!r->is_optimized) {
+            penalties[count].points_lost = r->score_weight;
+            snprintf(penalties[count].reason, sizeof(penalties[count].reason),
+                     "%s -> %s", r->title, r->current_state);
+            score -= r->score_weight;
+            count++;
+        }
     }
 
-    if (tw->game_dvr_enabled) {
-        penalties[count].points_lost = 8;
-        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Xbox GameDVR ativo em segundo plano (gasta placa de video e reduz FPS)");
-        score -= 8;
-        count++;
-    }
-
-    if (tw->menu_show_delay_ms > 50) {
-        penalties[count].points_lost = 6;
-        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Velocidade dos menus em %d ms (atraso padrao lento do Windows)", tw->menu_show_delay_ms);
-        score -= 6;
-        count++;
-    }
-
-    if (tw->explorer_ads_enabled) {
-        penalties[count].points_lost = 4;
-        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Anuncios e sugestoes promocionais ativos no Windows Explorer");
-        score -= 4;
-        count++;
-    }
-
-    /* So desconta pontos se houver mais de 6 programas REALMENTE HABILITADOS no Gerenciador de Tarefas */
-    if (tw->startup_enabled_count > 6) {
+    /* 2. Avalia sobrecarga real do Boot (apenas os HABILITADOS em StartupApproved\Run) */
+    if (tw->startup_enabled_count > 6 && count < 18) {
         penalties[count].points_lost = 8;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
                  "%d programas habilitados abrindo sozinhos no boot (gasta RAM e atrasa o login)",
@@ -66,54 +46,55 @@ static int evaluate_health_score(
         count++;
     }
 
-    if (!tw->ntfs_trim_enabled) {
-        penalties[count].points_lost = 12;
+    if (!tw->ntfs_trim_enabled && count < 18) {
+        penalties[count].points_lost = 10;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
                  "Comando TRIM do SSD desativado (deixa o SSD lento com o tempo)");
-        score -= 12;
+        score -= 10;
         count++;
     }
 
-    /* Usa o mesmo valor de safe_cleanable_bytes exibido no topo da caixa para nunca divergir! */
-    if (st->safe_cleanable_bytes > 500ULL * 1024 * 1024) {
+    /* 3. Avalia lixo temporario do sistema */
+    if (st->safe_cleanable_bytes > 500ULL * 1024 * 1024 && count < 18) {
         char sz[32];
         ui_format_bytes(st->safe_cleanable_bytes, sz, sizeof(sz));
-        penalties[count].points_lost = 7;
+        penalties[count].points_lost = 6;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
                  "%s acumulados em lixo temporario do sistema (%%TEMP%%, CrashDumps, DirectX)", sz);
-        score -= 7;
+        score -= 6;
         count++;
-    } else if (st->safe_cleanable_bytes > 100ULL * 1024 * 1024) {
+    } else if (st->safe_cleanable_bytes > 100ULL * 1024 * 1024 && count < 18) {
         char sz[32];
         ui_format_bytes(st->safe_cleanable_bytes, sz, sizeof(sz));
-        penalties[count].points_lost = 4;
+        penalties[count].points_lost = 3;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
                  "%s acumulados em lixo temporario do sistema prontos para limpar", sz);
+        score -= 3;
+        count++;
+    }
+
+    /* 4. Avalia Hardware e BIOS */
+    if (!hw->virt_firmware_enabled && count < 18) {
+        penalties[count].points_lost = 6;
+        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
+                 "Virtualizacao (VT-x / AMD-V) desativada na BIOS");
+        score -= 6;
+        count++;
+    }
+
+    if (!hw->secure_boot_enabled && count < 18) {
+        penalties[count].points_lost = 4;
+        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
+                 "UEFI Secure Boot desativado na BIOS (alteravel apenas no menu da BIOS da placa-mae)");
         score -= 4;
         count++;
     }
 
-    if (!hw->virt_firmware_enabled) {
-        penalties[count].points_lost = 8;
-        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "Virtualizacao (VT-x / AMD-V) desativada na BIOS");
-        score -= 8;
-        count++;
-    }
-
-    if (!hw->secure_boot_enabled) {
+    if (hw->ram_load_pct > 85 && count < 18) {
         penalties[count].points_lost = 5;
         snprintf(penalties[count].reason, sizeof(penalties[count].reason),
-                 "UEFI Secure Boot desativado na BIOS (so pode ser alterado manualmente na BIOS da placa-mae)");
-        score -= 5;
-        count++;
-    }
-
-    if (hw->ram_load_pct > 85) {
-        penalties[count].points_lost = 6;
-        snprintf(penalties[count].reason, sizeof(penalties[count].reason),
                  "Memoria RAM muito cheia (%u%% em uso agora)", hw->ram_load_pct);
-        score -= 6;
+        score -= 5;
         count++;
     }
 
@@ -128,7 +109,7 @@ static void render_summary_box(
     const storage_report_t  *st,
     const tweaks_report_t   *tw
 ) {
-    score_penalty_t penalties[12];
+    score_penalty_t penalties[20];
     int penalty_count = 0;
     int score = evaluate_health_score(hw, st, tw, penalties, &penalty_count);
 
@@ -141,11 +122,11 @@ static void render_summary_box(
     uint64_t dev_cache_bytes = (st->total_cache_bytes > st->safe_cleanable_bytes)
                                ? (st->total_cache_bytes - st->safe_cleanable_bytes) : 0;
     ui_format_bytes(st->safe_cleanable_bytes, sys_cache_str, sizeof(sys_cache_str));
-    ui_format_bytes(dev_cache_bytes, dev_cache_str, sizeof(dev_cache_str));
+    ui_format_bytes(dev_cache_bytes + st->total_dev_bytes, dev_cache_str, sizeof(dev_cache_str));
     ui_format_bytes(st->total_cold_bytes, cold_str, sizeof(cold_str));
 
-    char line_storage_buf[24][256];
-    const char *box_lines[24];
+    char line_storage_buf[28][256];
+    const char *box_lines[28];
     int n = 0;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
@@ -155,7 +136,13 @@ static void render_summary_box(
     n++;
 
     snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
-             "Lixo temporario sistema   " ANSI_BOLD "%s" ANSI_RESET "  ·  Caches de Apps (NPM/Pip/Chrome): " ANSI_BOLD "%s" ANSI_RESET,
+             "Otimizacoes do Windows    " ANSI_GREEN ANSI_BOLD "%d/%d ativas" ANSI_RESET "  ·  " ANSI_YELLOW ANSI_BOLD "%d pendentes para aplicar" ANSI_RESET,
+             tw->optimized_tweaks_count, tw->rule_count, tw->pending_tweaks_count);
+    box_lines[n] = line_storage_buf[n];
+    n++;
+
+    snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
+             "Lixo temporario sistema   " ANSI_BOLD "%s" ANSI_RESET "  ·  Caches Dev/Apps (NPM/Pip/Chrome): " ANSI_BOLD "%s" ANSI_RESET,
              sys_cache_str, dev_cache_str);
     box_lines[n] = line_storage_buf[n];
     n++;
@@ -182,7 +169,7 @@ static void render_summary_box(
         box_lines[n] = line_storage_buf[n];
         n++;
 
-        for (int i = 0; i < penalty_count && n < 23; i++) {
+        for (int i = 0; i < penalty_count && n < 27; i++) {
             snprintf(line_storage_buf[n], sizeof(line_storage_buf[n]),
                      "  " ANSI_RED "-%2d pts" ANSI_RESET "  %s",
                      penalties[i].points_lost, penalties[i].reason);
@@ -194,12 +181,12 @@ static void render_summary_box(
     ui_box(box_lines, n, "Resultado da Analise (Nada foi alterado ainda)");
 }
 
-/* Tela de Limpeza e Exclusao: Permite limpar caches do sistema, caches de dev (NPM/Pip) e arquivos grandes */
+/* Tela de Limpeza e Exclusao: Caches do sistema, Caches opcionais, Pastas node_modules/.venv e Arquivos grandes */
 static void interactive_file_removal_screen(storage_report_t *st, bool already_scanned) {
     if (!already_scanned) {
         ui_clear();
         ui_banner();
-        ui_step(1, 1, "Analisando disco, pastas de cache e arquivos grandes (somente leitura)");
+        ui_step(1, 1, "Analisando disco, pastas de cache, node_modules e arquivos grandes (somente leitura)");
         storage_run_audit(st, 50, 30, NULL);
     }
 
@@ -210,10 +197,11 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
 
         printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Analise concluida. Escolha abaixo com as setas o que deseja apagar:" ANSI_RESET "\n");
 
-        char labels_buf[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4][120];
-        const char *labels[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4];
-        int opt_type[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4]; /* 0=all_sys_cache, 1=single_cache, 2=cold_file, 3=back */
-        int opt_index[MAX_CACHE_TARGETS + MAX_COLD_FILES + 4];
+        #define MAX_CLEAN_MENU_OPTS (MAX_CACHE_TARGETS + MAX_DEV_ARTIFACT_DIRS + MAX_COLD_FILES + 4)
+        char labels_buf[MAX_CLEAN_MENU_OPTS][120];
+        const char *labels[MAX_CLEAN_MENU_OPTS];
+        int opt_type[MAX_CLEAN_MENU_OPTS]; /* 0=all_sys_cache, 1=single_cache, 2=dev_dir, 3=cold_file, 4=back */
+        int opt_index[MAX_CLEAN_MENU_OPTS];
         int total_opts = 0;
 
         char cache_sz[32];
@@ -226,7 +214,7 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
         opt_index[total_opts] = -1;
         total_opts++;
 
-        /* Tambem permite limpar individualmente os caches pesados de NPM / Pip se tiverem arquivos */
+        /* Caches de ferramentas / navegadores (NPM, Pip, Chrome) */
         for (int i = 0; i < st->cache_count; i++) {
             const cache_target_t *c = &st->caches[i];
             if (c->safe_to_clean || c->size_bytes == 0) continue;
@@ -241,6 +229,35 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
             total_opts++;
         }
 
+        /* Pastas pesadas de desenvolvimento (node_modules, .venv) */
+        for (int i = 0; i < st->dev_dir_count; i++) {
+            const dev_artifact_t *d = &st->dev_dirs[i];
+            char dsz[32];
+            ui_format_bytes(d->size_bytes, dsz, sizeof(dsz));
+
+            const char *p = d->path;
+            char short_path[48];
+            size_t plen = strlen(p);
+            if (plen > 44) {
+                snprintf(short_path, sizeof(short_path), "...%s", p + (plen - 41));
+            } else {
+                snprintf(short_path, sizeof(short_path), "%s", p);
+            }
+
+            if (d->deleted) {
+                snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                         "[PASTA JA EXCLUIDA]        %s (%s)", short_path, dsz);
+            } else {
+                snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
+                         "[EXCLUIR PASTA PROJETO]    %-10s (%s) -> %s", dsz, d->kind, short_path);
+            }
+            labels[total_opts]    = labels_buf[total_opts];
+            opt_type[total_opts]  = 2;
+            opt_index[total_opts] = i;
+            total_opts++;
+        }
+
+        /* Arquivos grandes esquecidos (>50 MB) */
         for (int i = 0; i < st->cold_file_count; i++) {
             const cold_file_t *cf = &st->cold_files[i];
             char fsz[32];
@@ -257,13 +274,13 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
 
             if (cf->deleted) {
                 snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
-                         "[JA EXCLUIDO]              %s (%s)", short_path, fsz);
+                         "[ARQUIVO JA EXCLUIDO]      %s (%s)", short_path, fsz);
             } else {
                 snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
                          "[EXCLUIR ARQUIVO GRANDE]   %-10s (%3d dias) -> %s", fsz, cf->days_unused, short_path);
             }
             labels[total_opts]    = labels_buf[total_opts];
-            opt_type[total_opts]  = 2;
+            opt_type[total_opts]  = 3;
             opt_index[total_opts] = i;
             total_opts++;
         }
@@ -271,13 +288,13 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
         snprintf(labels_buf[total_opts], sizeof(labels_buf[total_opts]),
                  "Sair e voltar ao Menu Principal");
         labels[total_opts]    = labels_buf[total_opts];
-        opt_type[total_opts]  = 3;
+        opt_type[total_opts]  = 4;
         opt_index[total_opts] = -1;
         total_opts++;
 
         int sel = ui_select("ESCOLHA O QUE DESEJA LIMPAR (PEDIRA SUA PERMISSAO ANTES)", labels, total_opts);
 
-        if (opt_type[sel] == 3) {
+        if (opt_type[sel] == 4) {
             break;
         }
 
@@ -319,6 +336,36 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
                 storage_run_audit(st, 50, 30, NULL);
             }
         } else if (opt_type[sel] == 2) {
+            int d_idx = opt_index[sel];
+            dev_artifact_t *d = &st->dev_dirs[d_idx];
+            if (d->deleted) {
+                ui_info("Esta pasta ja foi excluida.");
+                ui_pause_enter("Continuar");
+                continue;
+            }
+            char dsz[32];
+            ui_format_bytes(d->size_bytes, dsz, sizeof(dsz));
+            char q[320], detail[360];
+            snprintf(q, sizeof(q), "Autoriza excluir a pasta de dependencias '%s'?", d->path);
+            snprintf(detail, sizeof(detail),
+                     "Apagara %u arquivos da pasta %s liberando %s (voce pode recriar depois com npm/pip install).",
+                     d->file_count, d->kind, dsz);
+            if (ui_confirm_arrows(q, detail)) {
+                uint64_t freed_b = 0;
+                uint32_t del_f = 0;
+                printf("\n");
+                if (storage_delete_directory_tree(d->path, &freed_b, &del_f)) {
+                    char f_str[32];
+                    ui_format_bytes(freed_b, f_str, sizeof(f_str));
+                    ui_ok("Pasta excluida com sucesso: " ANSI_BOLD "%s" ANSI_RESET " (%s liberados em %u arquivos)",
+                          d->path, f_str, del_f);
+                    d->deleted = true;
+                } else {
+                    ui_fail("Nao foi possivel excluir '%s'.", d->path);
+                }
+                ui_pause_enter("Continuar");
+            }
+        } else if (opt_type[sel] == 3) {
             int file_idx = opt_index[sel];
             cold_file_t *cf = &st->cold_files[file_idx];
             if (cf->deleted) {
@@ -354,7 +401,7 @@ static void interactive_file_removal_screen(storage_report_t *st, bool already_s
     }
 }
 
-/* Tela Interativa de Programas na Inicializacao (Boot): Permite Habilitar / Desabilitar igual ao Task Manager */
+/* Tela Interativa de Programas na Inicializacao (Boot) */
 static void interactive_startup_screen(tweaks_report_t *tw, bool already_scanned) {
     if (!already_scanned) {
         ui_clear();
@@ -428,7 +475,7 @@ static void interactive_startup_screen(tweaks_report_t *tw, bool already_scanned
     }
 }
 
-/* Tela de Otimizacao do Windows: So oferece aplicar o que estiver realmente PENDENTE */
+/* Tela Completa de Otimizacao do Windows (12 Regras + Selecao em Lote ou Individual + Flush DNS) */
 static void interactive_optimize_screen(void) {
     for (;;) {
         ui_clear();
@@ -437,86 +484,96 @@ static void interactive_optimize_screen(void) {
         tweaks_report_t current;
         int pending = tweaks_inspect_optimizations(&current);
 
-        if (pending == 0) {
-            ui_ok(ANSI_BOLD "Tudo otimizado!" ANSI_RESET " Todos os 4 ajustes acima ja estao ativos no seu Windows (nada pendente).");
-
-            const char *done_labels[] = {
-                "Voltar ao Menu Principal",
-                "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)"
-            };
-            int sel = ui_select("NENHUMA OTIMIZACAO PENDENTE", done_labels, 2);
-            if (sel == 1) {
-                if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao lento de fabrica?",
-                                      "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
-                    printf("\n");
-                    tweaks_restore_windows_defaults();
-                    ui_pause_enter("Continuar");
-                    continue;
-                }
-            }
-            return;
-        }
-
-        printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Encontrados %d ajuste(s) pendente(s). Os itens que ja estao 'JA OTIMIZADO' nao serao tocados." ANSI_RESET "\n",
-               pending);
-
-        char apply_all_btn[128];
-        snprintf(apply_all_btn, sizeof(apply_all_btn),
-                 "Autorizar e aplicar todos os %d ajuste(s) pendente(s) agora", pending);
-
-        char opt_buf[6][128];
-        const char *opt_labels[6];
-        int opt_code[6]; /* 0=apply_all, 1=power_only, 2=back, 3=restore */
+        char opt_buf[MAX_TWEAK_RULES + 5][128];
+        const char *opt_labels[MAX_TWEAK_RULES + 5];
+        int opt_code[MAX_TWEAK_RULES + 5]; /* 0=apply_all, 1=single_rule, 2=flush_dns, 3=restore, 4=back */
+        int opt_rule_idx[MAX_TWEAK_RULES + 5];
         int count = 0;
 
-        snprintf(opt_buf[count], sizeof(opt_buf[count]), "%s", apply_all_btn);
-        opt_labels[count] = opt_buf[count];
-        opt_code[count] = 0;
-        count++;
+        if (pending == 0) {
+            ui_ok(ANSI_BOLD "Tudo otimizado!" ANSI_RESET " Todas as %d regras de desempenho acima ja estao ativas no seu Windows.",
+                  current.rule_count);
+        } else {
+            printf("  " ANSI_GREEN "·" ANSI_RESET " " ANSI_DIM "Status: %d/%d ja otimizadas · %d pendente(s) para aplicar. Escolha abaixo:" ANSI_RESET "\n",
+                   current.optimized_tweaks_count, current.rule_count, pending);
 
-        if (!current.is_high_performance) {
             snprintf(opt_buf[count], sizeof(opt_buf[count]),
-                     "Mudar apenas o Plano de Energia para 'Alto Desempenho' agora");
-            opt_labels[count] = opt_buf[count];
-            opt_code[count] = 1;
+                     "[APLICAR TODOS OS PENDENTES] Autorizar e aplicar os %d ajuste(s) pendente(s) de uma vez",
+                     pending);
+            opt_labels[count]   = opt_buf[count];
+            opt_code[count]     = 0;
+            opt_rule_idx[count] = -1;
             count++;
+
+            /* Tambem lista cada ajuste PENDENTE individualmente para o usuario poder escolher 1 por 1 */
+            for (int i = 0; i < current.rule_count; i++) {
+                const tweak_rule_t *r = &current.rules[i];
+                if (r->is_optimized) continue;
+                snprintf(opt_buf[count], sizeof(opt_buf[count]),
+                         "[APLICAR INDIVIDUAL]         %s (%s)", r->title, r->target_state);
+                opt_labels[count]   = opt_buf[count];
+                opt_code[count]     = 1;
+                opt_rule_idx[count] = i;
+                count++;
+            }
         }
 
         snprintf(opt_buf[count], sizeof(opt_buf[count]),
-                 "Sair e voltar ao Menu Principal sem alterar nada");
-        opt_labels[count] = opt_buf[count];
-        opt_code[count] = 2;
+                 "[REDE & PING]                Limpar Cache de Rotas DNS agora (ipconfig /flushdns)");
+        opt_labels[count]   = opt_buf[count];
+        opt_code[count]     = 2;
+        opt_rule_idx[count] = -1;
         count++;
 
         snprintf(opt_buf[count], sizeof(opt_buf[count]),
-                 "Restaurar padroes originais de fabrica do Windows (desfazer otimizacoes)");
-        opt_labels[count] = opt_buf[count];
-        opt_code[count] = 3;
+                 "Sair e voltar ao Menu Principal");
+        opt_labels[count]   = opt_buf[count];
+        opt_code[count]     = 4;
+        opt_rule_idx[count] = -1;
         count++;
 
-        int sel = ui_select("DESEJA APLICAR OS AJUSTES PENDENTES?", opt_labels, count);
-        if (opt_code[sel] == 2) {
+        snprintf(opt_buf[count], sizeof(opt_buf[count]),
+                 "[RESTAURAR PADROES]          Voltar todas as configuracoes para o padrao de fabrica do Windows");
+        opt_labels[count]   = opt_buf[count];
+        opt_code[count]     = 3;
+        opt_rule_idx[count] = -1;
+        count++;
+
+        int sel = ui_select("PAINEL DE OTIMIZACAO - ESCOLHA UMA ACAO", opt_labels, count);
+        int action = opt_code[sel];
+
+        if (action == 4) {
             break;
-        } else if (opt_code[sel] == 0) {
+        } else if (action == 0) {
             printf("\n");
             int applied = tweaks_apply_pending_optimizations(&current);
             printf("\n");
             ui_ok(ANSI_BOLD "%d ajuste(s) pendente(s) aplicado(s) com sucesso!" ANSI_RESET, applied);
-            ui_pause_enter("Ver resultado atualizado");
-        } else if (opt_code[sel] == 1) {
-            printf("\n");
-            if (tweaks_activate_high_performance_power()) {
-                ui_ok("Plano de Energia alterado com sucesso para " ANSI_BOLD "Alto Desempenho" ANSI_RESET "!");
-            } else {
-                ui_warn("Nao foi possivel ativar o plano Alto Desempenho.");
+            ui_pause_enter("Ver painel atualizado");
+        } else if (action == 1) {
+            int r_idx = opt_rule_idx[sel];
+            const tweak_rule_t *r = &current.rules[r_idx];
+            char q[180];
+            snprintf(q, sizeof(q), "Autoriza aplicar '%s' (%s)?", r->title, r->target_state);
+            if (ui_confirm_arrows(q, r->explanation)) {
+                printf("\n");
+                tweaks_apply_single_rule(r->id);
+                ui_pause_enter("Ver painel atualizado");
             }
-            ui_pause_enter("Ver resultado atualizado");
-        } else if (opt_code[sel] == 3) {
-            if (ui_confirm_arrows("Tem certeza que deseja voltar as configuracoes para o padrao de fabrica?",
-                                  "Volta o plano para Equilibrado, MenuShowDelay para 400ms e reativa o GameDVR.")) {
+        } else if (action == 2) {
+            printf("\n");
+            if (tweaks_flush_dns_cache()) {
+                ui_ok("Cache de resolucao DNS limpo com sucesso (" ANSI_BOLD "ipconfig /flushdns" ANSI_RESET ")!");
+            } else {
+                ui_warn("Nao foi possivel limpar o cache DNS.");
+            }
+            ui_pause_enter("Continuar");
+        } else if (action == 3) {
+            if (ui_confirm_arrows("Tem certeza que deseja restaurar todas as 12 regras para o padrao original do Windows?",
+                                  "Volta o plano para Equilibrado, Menus para 400ms, reativa GameDVR, Bing e apps em 2o plano.")) {
                 printf("\n");
                 tweaks_restore_windows_defaults();
-                ui_pause_enter("Ver resultado atualizado");
+                ui_pause_enter("Ver painel atualizado");
             }
         }
     }
@@ -526,23 +583,23 @@ static void print_help(void) {
     printf(ANSI_BOLD "Uso:" ANSI_RESET " windows-tweaker [comando] [opcoes]\n\n");
     printf(ANSI_BOLD "Como usar" ANSI_RESET "\n");
     printf("  windows-tweaker             abre o menu interativo controlado pelas setas (↑/↓) e Enter\n");
-    printf("  windows-tweaker scan        executa a analise completa (somente leitura)\n");
-    printf("  windows-tweaker limpar      analisa os caches e arquivos grandes e pede permissao para limpar\n");
-    printf("  windows-tweaker otimizar    analisa ou aplica os ajustes do Windows e Jogos\n");
+    printf("  windows-tweaker scan        executa a analise completa das 12 otimizacoes, disco e hardware\n");
+    printf("  windows-tweaker limpar      analisa os caches, node_modules e arquivos grandes para limpeza\n");
+    printf("  windows-tweaker otimizar    inspeciona ou aplica as 12 regras de desempenho do Windows\n");
     printf("  windows-tweaker startup     lista e gerencia os programas que iniciam com o Windows\n");
     printf("  windows-tweaker hardware    mostra processador, memoria RAM, placa-mae e BIOS\n\n");
     printf(ANSI_BOLD "Opcoes para uso via script" ANSI_RESET "\n");
     printf("  --dry-run                   apenas analisa sem apagar nem alterar nada\n");
-    printf("  --apply, --yes              executa a limpeza de caches ou aplica as otimizacoes direto\n");
+    printf("  --apply, --yes              executa a limpeza de caches ou aplica as otimizacoes pendentes direto\n");
     printf("  --min-mb 50                 tamanho minimo em MB para listar arquivos grandes (padrao: 50)\n");
     printf("  --days 30                   dias sem uso para listar arquivos grandes esquecidos (padrao: 30)\n");
 }
 
 static int interactive_menu(void) {
     static const char *MAIN_LABELS[] = {
-        "1. Diagnostico Completo do PC (Nota de 0 a 100 explicada)",
-        "2. Limpar Caches Temporarios e Excluir Arquivos Pesados",
-        "3. Otimizar Windows e Jogos (Plano de Energia, Menus e GameDVR)",
+        "1. Diagnostico Completo do PC (Nota de 0 a 100 + 12 Regras Auditadas)",
+        "2. Limpar Caches, Pastas de Projetos (node_modules) e Arquivos Pesados",
+        "3. Otimizar Windows, Rede, RAM e Jogos (Painel de 12 Otimizacoes)",
         "4. Programas na Inicializacao (Habilitar / Desabilitar no Boot)",
         "5. Hardware, Memoria RAM e BIOS (CPU, Virtualizacao e Secure Boot)",
         "0. Sair do Windows Tweaker"
@@ -564,9 +621,9 @@ static int interactive_menu(void) {
 
         if (choice == 0) {
             if (!ui_open_tool_screen(
-                    "1. DIAGNOSTICO COMPLETO DO PC",
-                    "Vai ler as informacoes do seu Processador, Memoria RAM, BIOS, medir o espaco ocupado por lixo temporario no disco e checar o Plano de Energia e programas habilitados no Boot.",
-                    "Voce vera um relatorio explicando cada item e o motivo da sua nota de 0 a 100. Logo abaixo do resultado apareceram os botoes diretos para resolver cada item pendente."
+                    "1. DIAGNOSTICO COMPLETO DO PC (12 REGRAS + DISCO + HARDWARE)",
+                    "Vai analisar Processador, RAM, BIOS, medir os caches temporarios e verificar todas as 12 regras de Energia, Jogos, Mouse 1:1, Rede P2P, Apps em 2o plano, Bing e Interface.",
+                    "Voce vera o motivo exato da sua nota de 0 a 100 e tera botoes diretos logo abaixo para aplicar apenas o que estiver pendente."
                 )) {
                 continue;
             }
@@ -582,34 +639,31 @@ static int interactive_menu(void) {
             hardware_run_audit(&hw);
             hardware_print_report(&hw);
 
-            ui_step(2, 3, "DISCO, CACHES TEMPORARIOS E ARQUIVOS ESQUECIDOS (SOMENTE LEITURA)");
+            ui_step(2, 3, "DISCO, HIBERFIL.SYS, CACHES E ARQUIVOS ESQUECIDOS (SOMENTE LEITURA)");
             storage_run_audit(&st, 50, 30, NULL);
             storage_print_report(&st);
 
-            ui_step(3, 3, "CONFIGURACOES DO WINDOWS E JOGOS (SOMENTE LEITURA)");
+            ui_step(3, 3, "AUDITORIA DAS 12 OTIMIZACOES DO WINDOWS, REDE, RAM E JOGOS");
             tweaks_run_audit(&tw);
             tweaks_print_report(&tw);
 
             render_summary_box(&hw, &st, &tw);
 
-            /* Monta botoes de acao pos-diagnostico conectados diretamente aos problemas encontrados! */
             char post_buf[6][128];
             const char *post_labels[6];
-            int post_code[6]; /* 0=power_fix, 1=optimize_screen, 2=clean_screen, 3=startup_screen, 4=back */
+            int post_code[6]; /* 0=apply_all_pending, 1=optimize_screen, 2=clean_screen, 3=startup_screen, 4=back */
             int pcount = 0;
-
-            if (!tw.is_high_performance) {
-                snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
-                         "Corrigir Plano de Energia: Ativar 'Alto Desempenho' agora (+8 pts na nota)");
-                post_labels[pcount] = post_buf[pcount];
-                post_code[pcount] = 0;
-                pcount++;
-            }
 
             if (tw.pending_tweaks_count > 0) {
                 snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
-                         "Ir para Otimizacao do Windows e Jogos (%d ajuste(s) pendente(s))",
+                         "Aplicar todos os %d ajuste(s) pendente(s) do Windows agora",
                          tw.pending_tweaks_count);
+                post_labels[pcount] = post_buf[pcount];
+                post_code[pcount] = 0;
+                pcount++;
+
+                snprintf(post_buf[pcount], sizeof(post_buf[pcount]),
+                         "Abrir Painel de 12 Otimizacoes (escolher ajustes 1 por 1)");
                 post_labels[pcount] = post_buf[pcount];
                 post_code[pcount] = 1;
                 pcount++;
@@ -641,14 +695,14 @@ static int interactive_menu(void) {
             int action = post_code[next_sel];
 
             if (action == 0) {
-                if (ui_confirm_arrows("Autoriza mudar o Plano de Energia do Windows para 'Alto Desempenho' agora?",
-                                      "Executa powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c para evitar quedas de clock da CPU.")) {
+                char q[160];
+                snprintf(q, sizeof(q), "Autoriza aplicar todos os %d ajuste(s) pendente(s) encontrados na analise?",
+                         tw.pending_tweaks_count);
+                if (ui_confirm_arrows(q, "Os itens que ja estao otimizados serao mantidos intactos.")) {
                     printf("\n");
-                    if (tweaks_activate_high_performance_power()) {
-                        ui_ok("Plano de Energia alterado com sucesso para " ANSI_BOLD "Alto Desempenho" ANSI_RESET " (+8 pts recuperados)!");
-                    } else {
-                        ui_warn("Nao foi possivel ativar o plano Alto Desempenho.");
-                    }
+                    int applied = tweaks_apply_pending_optimizations(&tw);
+                    printf("\n");
+                    ui_ok(ANSI_BOLD "%d ajuste(s) aplicado(s) com sucesso!" ANSI_RESET, applied);
                     ui_pause_enter("Voltar ao Menu Principal");
                 }
             } else if (action == 1) {
@@ -660,9 +714,9 @@ static int interactive_menu(void) {
             }
         } else if (choice == 1) {
             if (!ui_open_tool_screen(
-                    "2. LIMPAR CACHES TEMPORARIOS E EXCLUIR ARQUIVOS PESADOS",
-                    "Vai escanear as pastas de lixo temporario do Windows (%TEMP%, Win\\Temp, CrashDumps, DirectX), caches de desenvolvimento (NPM/Pip) e arquivos grandes (>50 MB) sem uso ha +30 dias.",
-                    "Mostrara a lista completa do que foi encontrado. Nada sera apagado durante a analise: voce escolhida na tela seguinte exatamente o que autoriza remover."
+                    "2. LIMPAR CACHES, NODE_MODULES E EXCLUIR ARQUIVOS PESADOS",
+                    "Vai escanear as pastas de lixo temporario do Windows (%TEMP%, Win\\Temp, CrashDumps, DirectX), caches de desenvolvimento (NPM/Pip), pastas node_modules/.venv e arquivos grandes (>50 MB) sem uso ha +30 dias.",
+                    "Mostrara a lista completa do que foi encontrado. Nada sera apagado durante a analise: voce escolhera na tela seguinte exatamente o que autoriza remover."
                 )) {
                 continue;
             }
@@ -670,9 +724,9 @@ static int interactive_menu(void) {
             interactive_file_removal_screen(&st, false);
         } else if (choice == 2) {
             if (!ui_open_tool_screen(
-                    "3. OTIMIZAR WINDOWS E JOGOS",
-                    "Vai verificar 4 configuracoes: Plano de Energia (Alto Desempenho), Velocidade dos Menus (MenuShowDelay), Xbox GameDVR e Anuncios no Windows Explorer.",
-                    "Os itens que ja estiverem otimizados aparecerao como 'JA OTIMIZADO' e nao serao tocados. Voce podera aplicar apenas o que estiver pendente."
+                    "3. PAINEL DE 12 OTIMIZACOES DO WINDOWS, REDE, RAM E JOGOS",
+                    "Vai analisar 12 configuracoes reais em 4 categorias: Energia & Hibernacao, Jogos & Mouse 1:1 Raw Input, Rede P2P & DNS, e Economia de RAM (Apps da Store em 2o plano, Bing no Menu Iniciar e Bloatware).",
+                    "Os itens que ja estiverem otimizados aparecerao como 'JA OTIMIZADO'. Voce podera aplicar todos os pendentes de uma vez ou escolher 1 por 1 pelas setas."
                 )) {
                 continue;
             }
@@ -752,11 +806,11 @@ static int dispatch_command(int argc, char *argv[]) {
         hardware_run_audit(&hw);
         hardware_print_report(&hw);
 
-        ui_step(2, 3, "DISCO, CACHES TEMPORARIOS E ARQUIVOS ESQUECIDOS");
+        ui_step(2, 3, "DISCO, HIBERFIL.SYS, CACHES E ARQUIVOS ESQUECIDOS");
         storage_run_audit(&st, min_cold_mb, min_cold_days, custom_dir);
         storage_print_report(&st);
 
-        ui_step(3, 3, "CONFIGURACOES DO WINDOWS E JOGOS");
+        ui_step(3, 3, "AUDITORIA DAS 12 OTIMIZACOES DO WINDOWS");
         tweaks_run_audit(&tw);
         tweaks_print_report(&tw);
 
@@ -799,10 +853,11 @@ static int dispatch_command(int argc, char *argv[]) {
         tweaks_report_t current;
         int pending = tweaks_inspect_optimizations(&current);
         if (pending == 0) {
-            ui_ok("Todos os ajustes ja estao otimizados no seu PC (0 pendentes).");
+            ui_ok("Todas as 12 otimizacoes ja estao ativas no seu PC (0 pendentes).");
         } else if (dry) {
             printf("\n");
-            ui_info("(dry-run: %d ajuste(s) pendente(s). Rode 'windows-tweaker otimizar --apply' para aplicar)", pending);
+            ui_info("(dry-run: %d de %d ajuste(s) pendente(s). Rode 'windows-tweaker otimizar --apply' para aplicar)",
+                    pending, current.rule_count);
         } else {
             printf("\n");
             tweaks_apply_pending_optimizations(&current);
