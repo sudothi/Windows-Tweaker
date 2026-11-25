@@ -170,6 +170,20 @@ bool tweaks_activate_high_performance_power(void) {
 }
 
 bool tweaks_flush_dns_cache(void) {
+    /* Chama diretamente a API nativa DnsFlushResolverCache() da dnsapi.dll do Windows
+     * (muito mais rapido que spawnar ipconfig.exe e funciona sem exigir elevacao UAC) */
+    typedef BOOL (WINAPI *fn_DnsFlushResolverCache)(void);
+    HMODULE hDns = LoadLibraryA("dnsapi.dll");
+    if (hDns) {
+        fn_DnsFlushResolverCache pFlush = (fn_DnsFlushResolverCache)(void *)GetProcAddress(hDns, "DnsFlushResolverCache");
+        if (pFlush) {
+            BOOL ok = pFlush();
+            FreeLibrary(hDns);
+            if (ok) return true;
+        } else {
+            FreeLibrary(hDns);
+        }
+    }
     int rc = system("ipconfig /flushdns >nul 2>nul");
     return (rc == 0);
 }
